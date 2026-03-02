@@ -27,6 +27,9 @@ LLM_MODELS = [
     "MiniMax/MiniMax-M2.5",
     "deepseek-ai/DeepSeek-V3.2",
     "ZhipuAI/GLM-4.7",
+    "deepseek-ai/DeepSeek-V3-0324",
+    "Qwen/Qwen3.5-397B-A17B",
+    "Qwen/Qwen2.5-72B-Instruct"
 ]
 
 # QQ SMTP
