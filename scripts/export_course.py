@@ -97,10 +97,10 @@ def _send_pdf_email(subject: str, pdf_bytes: bytes, filename: str) -> None:
     msg["From"] = formataddr(("iCourse Subscriber", config.SMTP_EMAIL))
     msg["To"] = config.RECEIVER_EMAIL
 
-    part = MIMEBase("application", "pdf")
+    part = MIMEBase("application", "pdf", name=filename)
     part.set_payload(pdf_bytes)
     encoders.encode_base64(part)
-    part.add_header("Content-Disposition", f'attachment; filename="{filename}"')
+    part.add_header("Content-Disposition", "attachment", filename=filename)
     msg.attach(part)
 
     with _smtp_connect() as server:

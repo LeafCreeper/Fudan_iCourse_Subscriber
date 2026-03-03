@@ -35,6 +35,7 @@ jobs:
       - name: Install PDF dependencies
         if: inputs.export_pdf == true
         run: |
+          sudo apt-get update
           sudo apt-get install -y fonts-noto-cjk libpango-1.0-0 libcairo2
           pip install weasyprint
 
