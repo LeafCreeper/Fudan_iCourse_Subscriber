@@ -25,3 +25,6 @@ docs/*
 
 *.mp3
 bugs.md
+
+# Local DB viewer tool
+db-viewer/

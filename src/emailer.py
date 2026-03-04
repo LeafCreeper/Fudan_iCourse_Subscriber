@@ -1,12 +1,14 @@
 import re
 import smtplib
 import time
+import uuid
 import requests
 from io import BytesIO
 from PIL import Image
 from collections import OrderedDict
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from email.mime.image import MIMEImage
 from html import escape
 from email.utils import formataddr
 from urllib.parse import quote
@@ -94,42 +96,51 @@ li { margin-bottom: 4px; }
 """
 
 _PDF_LATEX_SCALE = 2.5
+_MIN_INLINE_HEIGHT = 13  # minimum logical height for inline formulas (px)
 
-_IMAGE_CACHE = {}
+_IMAGE_CACHE: dict[str, tuple] = {}
 
-def _get_image_dimensions(url: str, dpi: int = 300) -> tuple:
-    """获取并计算适配 300 DPI 的逻辑宽高"""
+
+def _fetch_latex_image(url: str, dpi: int = 300) -> tuple:
+    """Fetch rendered LaTeX image, return (width, height, png_bytes).
+
+    Width/height are logical display pixels (DPI-adjusted).
+    Returns (None, None, None) on failure.
+    """
     if url in _IMAGE_CACHE:
         return _IMAGE_CACHE[url]
-        
+
     try:
-        # 300 DPI 是标准网页 96 DPI 的 3.125 倍
         scale_factor = dpi / 96.0
-        response = requests.get(url, timeout=5)
+        response = requests.get(url, timeout=10)
         response.raise_for_status()
-        
+
         img = Image.open(BytesIO(response.content))
-        # 计算逻辑宽高，最小为 1px
         logical_width = max(1, int(img.width / scale_factor))
         logical_height = max(1, int(img.height / scale_factor))
-        
-        _IMAGE_CACHE[url] = (logical_width, logical_height)
-        return logical_width, logical_height
+
+        result = (logical_width, logical_height, response.content)
+        _IMAGE_CACHE[url] = result
+        return result
     except Exception as e:
-        print(f"[LaTeX Render] 获取图片尺寸失败 {url}: {e}")
-        return None, None
-def _md_to_html(md_text: str, pdf_mode: bool = False) -> str:
+        print(f"[LaTeX Render] Image fetch failed: {e}")
+        return None, None, None
+def _md_to_html(md_text: str, pdf_mode: bool = False,
+                cid_images: dict | None = None) -> str:
     """Convert Markdown to styled HTML, rendering LaTeX math as images.
 
     Processing order: extract LaTeX → markdown convert → restore as <img>.
-    This prevents the markdown engine from corrupting backslash escapes in LaTeX.
+    This prevents the markdown engine from corrupting backslash escapes.
 
     Args:
         md_text: Markdown source text.
-        pdf_mode: When True, scale LaTeX image dimensions to 1/2.5 of their
-                  normal size to avoid oversized images in PDF output.
+        pdf_mode: Scale LaTeX dimensions for PDF output.
+        cid_images: When provided (dict), download images and embed via CID
+                    references instead of external URLs.  The dict is populated
+                    with {cid_name: png_bytes} entries for the caller to attach
+                    to the MIME message.
     """
-    latex_map = {}
+    latex_map: dict[str, str] = {}
     counter = 0
 
     def _stash(match):
@@ -139,61 +150,107 @@ def _md_to_html(md_text: str, pdf_mode: bool = False) -> str:
         latex_map[key] = match.group(0)
         return key
 
+    def _stash_block(match):
+        """Stash \\[...\\] as $$...$$ for uniform downstream handling."""
+        nonlocal counter
+        key = f"\x00LATEX{counter}\x00"
+        counter += 1
+        latex_map[key] = "$$" + match.group(1) + "$$"
+        return key
+
+    def _stash_inline(match):
+        """Stash \\(...\\) as $...$ for uniform downstream handling."""
+        nonlocal counter
+        key = f"\x00LATEX{counter}\x00"
+        counter += 1
+        latex_map[key] = "$" + match.group(1) + "$"
+        return key
+
+    # Extract LaTeX in order: block first, then inline
+    # 1) $$...$$ block formulas
     text = re.sub(r"\$\$(.+?)\$\$", _stash, md_text, flags=re.DOTALL)
+    # 2) \[...\] block formulas (normalize to $$...$$)
+    text = re.sub(r"\\\[(.+?)\\\]", _stash_block, text, flags=re.DOTALL)
+    # 3) $...$ inline formulas (not $$)
     text = re.sub(r"(?<!\$)\$(?!\$)(.+?)(?<!\$)\$(?!\$)", _stash, text)
+    # 4) \(...\) inline formulas (normalize to $...$)
+    text = re.sub(r"\\\((.+?)\\\)", _stash_inline, text)
 
     html = markdown.markdown(text, extensions=_MD_EXTENSIONS)
 
     for key, original in latex_map.items():
         if original.startswith("$$"):
-            # 块级公式处理
             latex_content = original[2:-2]
-            # 注意：如果背景是纯白，可以加上 \bg{white} 参数以适配深色模式
-            url = f"https://latex.codecogs.com/png.latex?\\dpi{{300}}\\bg{{white}}%20{quote(latex_content)}"
-            w, h = _get_image_dimensions(url)
-            
+            url = (
+                "https://latex.codecogs.com/png.latex?"
+                r"\dpi{300}\bg{white}"
+                f"%20{quote(latex_content)}"
+            )
+            w, h, img_data = _fetch_latex_image(url)
+
             if w and h:
                 if pdf_mode:
                     w = max(1, int(w / _PDF_LATEX_SCALE))
                     h = max(1, int(h / _PDF_LATEX_SCALE))
-                # 完美方案：写死 width 和 height
-                img = (
+
+                src = _resolve_src(url, img_data, cid_images)
+                img_tag = (
                     f'<div style="text-align:center;margin:16px 0">'
-                    f'<img src="{url}" alt="{escape(latex_content)}" '
-                    f'width="{w}" height="{h}" style="vertical-align:middle; border:none; display:inline-block;"></div>'
+                    f'<img src="{src}" alt="{escape(latex_content)}" '
+                    f'width="{w}" height="{h}" '
+                    f'style="width:{w}px;height:{h}px;max-width:none;'
+                    f'vertical-align:middle;border:none;display:inline-block;">'
+                    f'</div>'
                 )
             else:
-                # 降级方案：网络失败时依靠 CSS 限制
-                img = (
+                img_tag = (
                     f'<div style="text-align:center;margin:16px 0">'
-                    f'<img src="{url}" alt="{escape(latex_content)}" '
-                    f'style="vertical-align:middle; max-width:100%; height:auto;"></div>'
+                    f'<code>{escape(latex_content)}</code></div>'
                 )
         else:
-            # 行内公式处理
             latex_content = original[1:-1]
-            url = f"https://latex.codecogs.com/png.latex?\\dpi{{300}}\\bg{{white}}\\inline%20{quote(latex_content)}"
-            w, h = _get_image_dimensions(url)
-            
+            url = (
+                "https://latex.codecogs.com/png.latex?"
+                r"\dpi{300}\bg{white}\inline"
+                f"%20{quote(latex_content)}"
+            )
+            w, h, img_data = _fetch_latex_image(url)
+
             if w and h:
                 if pdf_mode:
                     w = max(1, int(w / _PDF_LATEX_SCALE))
                     h = max(1, int(h / _PDF_LATEX_SCALE))
-                # 完美方案：写死 width 和 height，并使用 vertical-align 微调对齐基线
-                img = (
-                    f'<img src="{url}" alt="{escape(latex_content)}" '
-                    f'width="{w}" height="{h}" style="vertical-align:-0.2em; border:none; margin:0 2px;">'
+                # Enforce minimum height so formulas aren't smaller than text
+                if not pdf_mode and h < _MIN_INLINE_HEIGHT:
+                    scale = _MIN_INLINE_HEIGHT / h
+                    w = max(1, int(w * scale))
+                    h = _MIN_INLINE_HEIGHT
+
+                src = _resolve_src(url, img_data, cid_images)
+                img_tag = (
+                    f'<img src="{src}" alt="{escape(latex_content)}" '
+                    f'width="{w}" height="{h}" '
+                    f'style="width:{w}px;height:{h}px;max-width:none;'
+                    f'vertical-align:-3px;border:none;margin:0 2px;">'
                 )
             else:
-                # 降级方案
-                img = (
-                    f'<img src="{url}" alt="{escape(latex_content)}" '
-                    f'style="vertical-align:middle; height:1.3em; border:none; margin:0 2px;">'
+                img_tag = (
+                    f'<code>{escape(latex_content)}</code>'
                 )
-                
-        html = html.replace(key, img)
+
+        html = html.replace(key, img_tag)
 
     return html
+
+
+def _resolve_src(url: str, img_data: bytes | None,
+                 cid_images: dict | None) -> str:
+    """Return a CID reference if embedding, otherwise the original URL."""
+    if cid_images is not None and img_data:
+        cid = f"latex-{uuid.uuid4().hex[:12]}"
+        cid_images[cid] = img_data
+        return f"cid:{cid}"
+    return url
 
 class Emailer:
     """Send course summary emails via QQ SMTP SSL."""
@@ -207,6 +264,10 @@ class Emailer:
 
     def send(self, items: list[dict]) -> bool:
         """Send a single email containing all lecture summaries.
+
+        LaTeX formulas are rendered as PNG images and embedded directly into
+        the email via CID attachments, so they display on all clients
+        (including mobile) without loading external images.
 
         Args:
             items: List of dicts, each with keys:
@@ -240,7 +301,8 @@ class Emailer:
                 plain_sections.append(lec["summary"])
         plain = "\n".join(plain_sections)
 
-        # HTML (Markdown → styled HTML with LaTeX rendering)
+        # HTML (Markdown → styled HTML with CID-embedded LaTeX images)
+        cid_images: dict[str, bytes] = {}
         body_parts = []
         for course_title, lectures in courses.items():
             body_parts.append(f"<h2>{escape(course_title)}</h2>")
@@ -249,7 +311,9 @@ class Emailer:
                     f"<h3>{escape(lec['sub_title'])} "
                     f"<small>({escape(lec['date'])})</small></h3>"
                 )
-                body_parts.append(_md_to_html(lec["summary"]))
+                body_parts.append(
+                    _md_to_html(lec["summary"], cid_images=cid_images)
+                )
                 body_parts.append("<hr>")
 
         html = (
@@ -261,12 +325,27 @@ class Emailer:
             + "</body></html>"
         )
 
-        msg = MIMEMultipart("alternative")
+        # Build MIME: related > alternative > (plain, html) + image attachments
+        msg = MIMEMultipart("related")
         msg["Subject"] = subject
         msg["From"] = formataddr(("iCourse Subscriber", self.sender))
         msg["To"] = self.receiver
-        msg.attach(MIMEText(plain, "plain", "utf-8"))
-        msg.attach(MIMEText(html, "html", "utf-8"))
+
+        msg_alt = MIMEMultipart("alternative")
+        msg_alt.attach(MIMEText(plain, "plain", "utf-8"))
+        msg_alt.attach(MIMEText(html, "html", "utf-8"))
+        msg.attach(msg_alt)
+
+        # Attach CID images
+        for cid, png_data in cid_images.items():
+            img_part = MIMEImage(png_data, "png")
+            img_part.add_header("Content-ID", f"<{cid}>")
+            img_part.add_header("Content-Disposition", "inline",
+                                filename=f"{cid}.png")
+            msg.attach(img_part)
+
+        if cid_images:
+            print(f"[Emailer] Embedded {len(cid_images)} LaTeX images as CID")
 
         # Retry with exponential backoff
         for attempt in range(3):
