@@ -12,7 +12,7 @@ from src.database import Database
 from src.emailer import Emailer
 from src.icourse import ICourseClient
 from src.summarizer import Summarizer
-from src.transcriber import IncompleteAudioError, Transcriber
+from src.transcriber import IncompleteAudioError, NoAudioStreamError, Transcriber
 from src.webvpn import WebVPNSession
 
 
@@ -81,6 +81,11 @@ def process_lecture(
                     # Use the partial transcript rather than failing entirely
                     transcript = transcriber._last_transcript
                     db.update_transcript(sub_id, transcript)
+            except NoAudioStreamError as e:
+                print(f"    [SKIP] Video-only (no audio stream): {e}")
+                db.update_error(sub_id, "transcribe", str(e))
+                db.mark_processed(sub_id)
+                return None
             except Exception as e:
                 print(f"    [FAIL] Transcription error: {type(e).__name__}: {e}")
                 db.update_error(sub_id, "transcribe", str(e))

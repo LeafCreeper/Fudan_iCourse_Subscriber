@@ -213,10 +213,15 @@ class Transcriber:
             )
 
         if proc.returncode not in (0, -9, None):
-            stderr_text = stderr_output.decode(errors="replace")[-500:]
+            stderr_text = stderr_output.decode(errors="replace")
+            if "does not contain any stream" in stderr_text:
+                raise NoAudioStreamError(
+                    f"ffmpeg found no audio stream (video-only file).\n"
+                    f"stderr (last 500 chars):\n{stderr_text[-500:]}"
+                )
             raise RuntimeError(
                 f"ffmpeg exited with code {proc.returncode}.\n"
-                f"stderr (last 500 chars):\n{stderr_text}"
+                f"stderr (last 500 chars):\n{stderr_text[-500:]}"
             )
 
         # Warn if no audio received (likely auth/network issue)
@@ -338,3 +343,7 @@ class IncompleteAudioError(RuntimeError):
         super().__init__(message)
         self.actual_duration = actual_duration
         self.expected_duration = expected_duration
+
+
+class NoAudioStreamError(RuntimeError):
+    """Raised when the media contains no audio stream (video-only file)."""
