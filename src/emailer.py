@@ -14,10 +14,21 @@ from email.utils import formataddr
 from urllib.parse import quote
 
 import markdown
+from pygments.formatters import HtmlFormatter
 
 from . import config
 
-_MD_EXTENSIONS = ["tables", "fenced_code", "nl2br", "sane_lists"]
+_MD_EXTENSIONS = ["tables", "fenced_code", "nl2br", "sane_lists", "codehilite"]
+
+_MD_EXTENSION_CONFIGS = {
+    "codehilite": {
+        "guess_lang": False,
+        "linenums": False,
+        "css_class": "highlight",
+    }
+}
+
+_PYGMENTS_CSS = HtmlFormatter(style="friendly").get_style_defs(".highlight")
 
 _EMAIL_CSS = """\
 body {
@@ -67,7 +78,7 @@ th {
 }
 tr:nth-child(even) { background: #fafafa; }
 pre {
-    background: #f4f4f4;
+    background: #f8f8f8;
     border: 1px solid #e0e0e0;
     border-radius: 4px;
     padding: 12px 16px;
@@ -95,7 +106,6 @@ ul, ol { padding-left: 24px; }
 li { margin-bottom: 4px; }
 """
 
-_PDF_LATEX_SCALE = 2.5
 _MIN_INLINE_HEIGHT = 13  # minimum logical height for inline formulas (px)
 
 _IMAGE_CACHE: dict[str, tuple] = {}
@@ -125,8 +135,9 @@ def _fetch_latex_image(url: str, dpi: int = 300) -> tuple:
     except Exception as e:
         print(f"[LaTeX Render] Image fetch failed: {e}")
         return None, None, None
-def _md_to_html(md_text: str, pdf_mode: bool = False,
-                cid_images: dict | None = None) -> str:
+
+
+def _md_to_html(md_text: str, cid_images: dict | None = None) -> str:
     """Convert Markdown to styled HTML, rendering LaTeX math as images.
 
     Processing order: extract LaTeX → markdown convert → restore as <img>.
@@ -134,7 +145,6 @@ def _md_to_html(md_text: str, pdf_mode: bool = False,
 
     Args:
         md_text: Markdown source text.
-        pdf_mode: Scale LaTeX dimensions for PDF output.
         cid_images: When provided (dict), download images and embed via CID
                     references instead of external URLs.  The dict is populated
                     with {cid_name: png_bytes} entries for the caller to attach
@@ -176,7 +186,11 @@ def _md_to_html(md_text: str, pdf_mode: bool = False,
     # 4) \(...\) inline formulas (normalize to $...$)
     text = re.sub(r"\\\((.+?)\\\)", _stash_inline, text)
 
-    html = markdown.markdown(text, extensions=_MD_EXTENSIONS)
+    html = markdown.markdown(
+        text,
+        extensions=_MD_EXTENSIONS,
+        extension_configs=_MD_EXTENSION_CONFIGS,
+    )
 
     for key, original in latex_map.items():
         if original.startswith("$$"):
@@ -189,10 +203,6 @@ def _md_to_html(md_text: str, pdf_mode: bool = False,
             w, h, img_data = _fetch_latex_image(url)
 
             if w and h:
-                if pdf_mode:
-                    w = max(1, int(w / _PDF_LATEX_SCALE))
-                    h = max(1, int(h / _PDF_LATEX_SCALE))
-
                 src = _resolve_src(url, img_data, cid_images)
                 img_tag = (
                     f'<div style="text-align:center;margin:16px 0">'
@@ -217,11 +227,8 @@ def _md_to_html(md_text: str, pdf_mode: bool = False,
             w, h, img_data = _fetch_latex_image(url)
 
             if w and h:
-                if pdf_mode:
-                    w = max(1, int(w / _PDF_LATEX_SCALE))
-                    h = max(1, int(h / _PDF_LATEX_SCALE))
                 # Enforce minimum height so formulas aren't smaller than text
-                if not pdf_mode and h < _MIN_INLINE_HEIGHT:
+                if h < _MIN_INLINE_HEIGHT:
                     scale = _MIN_INLINE_HEIGHT / h
                     w = max(1, int(w * scale))
                     h = _MIN_INLINE_HEIGHT
@@ -234,9 +241,7 @@ def _md_to_html(md_text: str, pdf_mode: bool = False,
                     f'vertical-align:-3px;border:none;margin:0 2px;">'
                 )
             else:
-                img_tag = (
-                    f'<code>{escape(latex_content)}</code>'
-                )
+                img_tag = f'<code>{escape(latex_content)}</code>'
 
         html = html.replace(key, img_tag)
 
@@ -251,6 +256,7 @@ def _resolve_src(url: str, img_data: bytes | None,
         cid_images[cid] = img_data
         return f"cid:{cid}"
     return url
+
 
 class Emailer:
     """Send course summary emails via QQ SMTP SSL."""
@@ -286,7 +292,7 @@ class Emailer:
 
         # Subject
         parts = [f"{ct} ({len(lecs)})" for ct, lecs in courses.items()]
-        subject = f"[iCourse 课程内容更新] {', '.join(parts)}"
+        subject = f"[FiCS] {', '.join(parts)}"
 
         # Plain text (Markdown as-is, readable without rendering)
         plain_sections = []
@@ -319,7 +325,7 @@ class Emailer:
         html = (
             "<!DOCTYPE html>"
             "<html><head><meta charset='utf-8'>"
-            f"<style>{_EMAIL_CSS}</style>"
+            f"<style>{_EMAIL_CSS}\n{_PYGMENTS_CSS}</style>"
             "</head><body>"
             + "\n".join(body_parts)
             + "</body></html>"
