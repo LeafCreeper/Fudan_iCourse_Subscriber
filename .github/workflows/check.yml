@@ -88,7 +88,10 @@ jobs:
           fi
 
       - name: Run
-        timeout-minutes: 350
+        # Keep well below the job-level 360-min timeout so that the
+        # "Deploy database" step (if: always()) still has time to run
+        # after a timeout cancellation and persist completed progress.
+        timeout-minutes: 330
         env:
           StuId: ${{ secrets.STUID }}
           UISPsw: ${{ secrets.UISPSW }}
