@@ -66,17 +66,17 @@ def _build_html(course_title: str, teacher: str, lectures: list[dict],
             f"<h2>{escape(lec['sub_title'])} "
             f"<small>({escape(lec['date'])})</small></h2>"
         )
-        _parts.append(_md_to_html(lec["summary"], cid_images=cid_images))
-        _parts.append("<hr>")
+        body_parts.append(_md_to_html(lec["summary"], cid_images=cid_images))
+        body_parts.append("<hr>")
 
     extra_css = f"\n{_PDF_LATEX_CSS}" if pdf else ""
     return (
         "<!DOCTYPE html>"
         "<html><head><meta charset='utf-8'>"
         f"<style>{_EMAIL_CSS}\n{_PYGMENTS_CSS}{extra_css}</style>"
-        "</head><>"
-        + "\n".join(_parts)
-        + "</></html>"
+        "</head><body>"
+        + "\n".join(body_parts)
+        + "</body></html>"
     )
 
 
