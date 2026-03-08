@@ -38,11 +38,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y fonts-noto-cjk libpango-1.0-0 libcairo2
           pip install weasyprint pygments
-          # 下载 Fandol 宋体（CTAN 官方源）
-          wget -q https://mirrors.ctan.org/fonts/fandol.zip -O /tmp/fandol.zip
-          sudo unzip -q /tmp/fandol.zip -d /tmp/fandol
-          sudo mkdir -p /usr/local/share/fonts/fandol
-          sudo cp /tmp/fandol/fandol/*.otf /usr/local/share/fonts/fandol/
+          sudo mkdir -p /usr/local/share/fonts/custom
+          sudo cp simsun.ttc /usr/local/share/fonts/custom/
           sudo fc-cache -fv
 
       - name: Fetch database from data branch
