@@ -36,7 +36,7 @@ jobs:
         if: inputs.export_pdf == true
         run: |
           sudo apt-get update
-          sudo apt-get install -y fonts-noto-cjk fonts-noto-serif-cjk libpango-1.0-0 libcairo2
+          sudo apt-get install -y fonts-noto-cjk fonts-noto-serif-cjk-sc libpango-1.0-0 libcairo2
           pip install weasyprint pygments
 
       - name: Fetch database from data branch
