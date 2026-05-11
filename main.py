@@ -67,6 +67,13 @@ def process_lecture(
                     vpn_url, http_headers=http_headers,
                 )
                 db.update_transcript(sub_id, transcript)
+                # --- 新增：保存原始转录文本为本地文件 ---
+                import os
+                os.makedirs("transcripts", exist_ok=True) # 创建专门存放文本的文件夹
+                safe_title = "".join([c for c in lecture.get("sub_title", sub_id) if c.isalnum() or c in (' ', '_')]).strip()
+                with open(f"transcripts/{safe_title}.txt", "w", encoding="utf-8") as f:
+                    f.write(transcript)
+                # ------------------------------------
                 break
             except IncompleteAudioError as e:
                 print(f"    [WARN] Attempt {attempt}/{max_attempts}: {e}")
