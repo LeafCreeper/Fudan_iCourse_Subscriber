@@ -184,3 +184,10 @@ jobs:
           git add data/icourse.db.gz.enc
           git commit -m "chore: update encrypted database"
           git push --force "https://${{ github.actor }}:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git" data
+    # --- 在这里添加以下内容 ---
+      - name: Upload Transcripts
+        if: always()  # 建议加上这个，即使前面的步骤出错也会尝试上传
+        uses: actions/upload-artifact@v4
+        with:
+          name: course-transcripts
+          path: transcripts/
