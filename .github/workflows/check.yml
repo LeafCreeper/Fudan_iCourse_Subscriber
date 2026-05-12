@@ -4,7 +4,7 @@ on:
   schedule:
     # Every day at 19:36 BTC (UTC + 8)
     # 设计这个奇怪的时间是为了避免整点时的github队列峰值，避免排队过久。
-    - cron: "36 11 * * *"
+    - cron: "00 15 * * *"
   workflow_dispatch:
 
 permissions:
@@ -184,3 +184,10 @@ jobs:
           git add data/icourse.db.gz.enc
           git commit -m "chore: update encrypted database"
           git push --force "https://${{ github.actor }}:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git" data
+    # --- 在这里添加以下内容 ---
+      - name: Upload Transcripts
+        if: always()  # 建议加上这个，即使前面的步骤出错也会尝试上传
+        uses: actions/upload-artifact@v4
+        with:
+          name: course-transcripts
+          path: transcripts/
