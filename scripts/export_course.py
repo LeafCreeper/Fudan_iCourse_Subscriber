@@ -25,6 +25,7 @@ import argparse
 import os
 import smtplib
 import sys
+import tempfile
 from email import encoders
 from email.mime.base import MIMEBase
 from email.mime.image import MIMEImage
@@ -38,6 +39,13 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.runtime import config
 from src.data.database import Database  # noqa: E402
+from src.data.crypto_box import derive_new_password  # noqa: E402
+from src.data.sharder import (  # noqa: E402
+    INDEX_FILENAME,
+    SHARDS_DIR,
+    load_index,
+    reassemble_database,
+)
 from src.api.emailer import _EMAIL_CSS, _PYGMENTS_CSS, _md_to_html  # noqa: E402
 
 # Override hardcoded pixel dimensions for PDF rendering.
@@ -184,6 +192,69 @@ def _safe_filename(title: str) -> str:
     return "".join(c if c.isalnum() or c in " _-" else "_" for c in title)
 
 
+def _resolve_db_path(db_arg: str) -> tuple[str, str | None]:
+    """Resolve ``--db`` to a usable sqlite path.
+
+    Returns:
+        (db_path, tmp_path)
+        - db_path: SQLite file path to open.
+        - tmp_path: Temp file to clean up afterwards, or None.
+
+    Supported inputs:
+      1) Plain sqlite path (legacy and current workflow output): data/icourse.db
+      2) V2 sharded directory: <dir>/icourse-index.enc + <dir>/shards/*.db.gz.enc
+      3) Direct V2 index file path: <dir>/icourse-index.enc
+    """
+    default_db = "data/icourse.db"
+
+    # Backward-compatible fast path: direct sqlite file.
+    if os.path.isfile(db_arg) and os.path.basename(db_arg) != INDEX_FILENAME:
+        return db_arg, None
+
+    # Auto-fallback for common V2 local layout when caller keeps default --db.
+    if db_arg == default_db and not os.path.isfile(db_arg):
+        maybe_sharded = os.path.join("data", "sharded")
+        if os.path.isdir(maybe_sharded):
+            db_arg = maybe_sharded
+
+    # Accept either a sharded directory or direct index file.
+    if os.path.isdir(db_arg):
+        base_dir = db_arg
+        index_path = os.path.join(base_dir, INDEX_FILENAME)
+    elif os.path.isfile(db_arg) and os.path.basename(db_arg) == INDEX_FILENAME:
+        index_path = db_arg
+        base_dir = os.path.dirname(index_path)
+    else:
+        raise FileNotFoundError(f"Database not found: {db_arg}")
+
+    shards_dir = os.path.join(base_dir, SHARDS_DIR)
+    if not os.path.isfile(index_path):
+        raise FileNotFoundError(f"Sharded index not found: {index_path}")
+    if not os.path.isdir(shards_dir):
+        raise FileNotFoundError(f"Shards directory not found: {shards_dir}")
+
+    stuid = os.environ.get("STUID") or os.environ.get("StuId", "")
+    uispsw = os.environ.get("UISPSW") or os.environ.get("UISPsw", "")
+    if not stuid or not uispsw:
+        raise ValueError(
+            "Detected V2 sharded database, but STUID and UISPSW env vars are required "
+            "to decrypt and reassemble shards."
+        )
+    password = derive_new_password(stuid, uispsw)
+
+    index = load_index(index_path, password)
+    with tempfile.NamedTemporaryFile(
+        suffix=".db",
+        prefix="icourse-export-",
+        delete=False,
+    ) as tmp:
+        tmp_db = tmp.name
+
+    reassemble_database(index, shards_dir, tmp_db, password)
+    print(f"Reassembled V2 sharded DB to temporary file: {tmp_db}")
+    return tmp_db, tmp_db
+
+
 def _query_course(db: Database, course_id: str,
                   sub_ids: list[str] | None = None) -> tuple[str, str, list[dict]] | None:
     """Return ``(course_title, teacher, lectures)`` for *course_id*.
@@ -255,11 +326,13 @@ def main():
     )
     args = parser.parse_args()
 
-    if not os.path.isfile(args.db):
-        print(f"Database not found: {args.db}")
+    try:
+        db_path, temp_db_path = _resolve_db_path(args.db)
+    except Exception as e:
+        print(str(e))
         sys.exit(1)
 
-    db = Database(args.db)
+    db = Database(db_path)
 
     # Parse comma-separated course IDs
     course_ids = [cid.strip() for cid in args.course_id.split(",") if cid.strip()]
@@ -276,92 +349,103 @@ def main():
         print("Email configuration incomplete. Set SMTP_EMAIL, SMTP_PASSWORD, RECEIVER_EMAIL.")
         sys.exit(1)
 
-    if args.pdf:
-        try:
-            import weasyprint  # noqa: PLC0415
-        except ImportError:
-            print("weasyprint is required for PDF export. Install it with: pip install weasyprint")
-            sys.exit(1)
+    try:
+        if args.pdf:
+            try:
+                import weasyprint  # noqa: PLC0415
+            except ImportError:
+                print("weasyprint is required for PDF export. Install it with: pip install weasyprint")
+                sys.exit(1)
 
-        # PDF mode: one PDF per course, all PDFs in one email
-        attachments: list[tuple[bytes, str]] = []
-        titles: list[str] = []
-        for cid in course_ids:
-            result = _query_course(db, cid, sub_ids=sub_ids)
-            if result is None:
-                continue
-            course_title, teacher, lectures = result
-            titles.append(course_title)
+            # PDF mode: one PDF per course, all PDFs in one email
+            attachments: list[tuple[bytes, str]] = []
+            titles: list[str] = []
+            for cid in course_ids:
+                result = _query_course(db, cid, sub_ids=sub_ids)
+                if result is None:
+                    continue
+                course_title, teacher, lectures = result
+                titles.append(course_title)
 
-            html = _build_html(course_title, teacher, lectures, pdf=True)
-            print(f"Generating PDF for {course_title}...")
-            pdf_bytes = weasyprint.HTML(string=html).write_pdf()
-            filename = f"{_safe_filename(course_title)}_summaries.pdf"
-            attachments.append((pdf_bytes, filename))
-            print(f"  PDF ready ({len(pdf_bytes)} bytes): {filename}")
+                html = _build_html(course_title, teacher, lectures, pdf=True)
+                print(f"Generating PDF for {course_title}...")
+                pdf_bytes = weasyprint.HTML(string=html).write_pdf()
+                filename = f"{_safe_filename(course_title)}_summaries.pdf"
+                attachments.append((pdf_bytes, filename))
+                print(f"  PDF ready ({len(pdf_bytes)} bytes): {filename}")
 
-        if not attachments:
-            print("No courses with summaries found – nothing to send.")
-            sys.exit(0)
+            if not attachments:
+                print("No courses with summaries found – nothing to send.")
+                sys.exit(0)
 
-        subject = "[iCourse 课程摘要导出] " + ", ".join(titles)
-        total_bytes = sum(len(b) for b, _ in attachments)
-        print(f"Sending email with {len(attachments)} PDF(s) ({total_bytes} bytes)...")
-        _send_pdf_email(subject, attachments)
-        print(f"[OK] Sent: {subject}")
-
-    elif args.md:
-        # Markdown mode: one MD file per course, all files in one email
-        attachments: list[tuple[bytes, str]] = []
-        titles: list[str] = []
-        for cid in course_ids:
-            result = _query_course(db, cid, sub_ids=sub_ids)
-            if result is None:
-                continue
-            course_title, teacher, lectures = result
-            titles.append(course_title)
-
-            markdown:str = _build_plain(course_title, teacher, lectures)
-            markdown_bytes = markdown.encode("utf-8")
-            filename = f"{_safe_filename(course_title)}_summaries.md"
-            attachments.append((markdown_bytes, filename))
-            print(f"  Markdown ready ({len(markdown_bytes)} bytes): {filename}")
-
-        if not attachments:
-            print("No courses with summaries found – nothing to send.")
-            sys.exit(0)
-
-        subject = "[iCourse 课程摘要导出] " + ", ".join(titles)
-        total_bytes = sum(len(b) for b, _ in attachments)
-        print(f"Sending email with {len(attachments)} MD(s) ({total_bytes} bytes)...")
-        _send_md_email(subject, attachments)
-        print(f"[OK] Sent: {subject}")
-
-    else:
-        # Email mode: one CID-embedded HTML email per course
-        sent = 0
-        for cid in course_ids:
-            result = _query_course(db, cid, sub_ids=sub_ids)
-            if result is None:
-                continue
-            course_title, teacher, lectures = result
-
-            cid_images: dict[str, bytes] = {}
-            html = _build_html(course_title, teacher, lectures,
-                               cid_images=cid_images)
-            plain = _build_plain(course_title, teacher, lectures)
-            subject = f"[iCourse 课程摘要导出] {course_title}"
-
-            print(f"Sending HTML email for {course_title}...")
-            if cid_images:
-                print(f"  Embedded {len(cid_images)} LaTeX image(s) as CID")
-            _send_html_email(subject, html, plain, cid_images=cid_images)
+            subject = "[iCourse 课程摘要导出] " + ", ".join(titles)
+            total_bytes = sum(len(b) for b, _ in attachments)
+            print(f"Sending email with {len(attachments)} PDF(s) ({total_bytes} bytes)...")
+            _send_pdf_email(subject, attachments)
             print(f"[OK] Sent: {subject}")
-            sent += 1
 
-        if sent == 0:
-            print("No courses with summaries found – nothing to send.")
-            sys.exit(0)
+        elif args.md:
+            # Markdown mode: one MD file per course, all files in one email
+            attachments: list[tuple[bytes, str]] = []
+            titles: list[str] = []
+            for cid in course_ids:
+                result = _query_course(db, cid, sub_ids=sub_ids)
+                if result is None:
+                    continue
+                course_title, teacher, lectures = result
+                titles.append(course_title)
+
+                markdown:str = _build_plain(course_title, teacher, lectures)
+                markdown_bytes = markdown.encode("utf-8")
+                filename = f"{_safe_filename(course_title)}_summaries.md"
+                attachments.append((markdown_bytes, filename))
+                print(f"  Markdown ready ({len(markdown_bytes)} bytes): {filename}")
+
+            if not attachments:
+                print("No courses with summaries found – nothing to send.")
+                sys.exit(0)
+
+            subject = "[iCourse 课程摘要导出] " + ", ".join(titles)
+            total_bytes = sum(len(b) for b, _ in attachments)
+            print(f"Sending email with {len(attachments)} MD(s) ({total_bytes} bytes)...")
+            _send_md_email(subject, attachments)
+            print(f"[OK] Sent: {subject}")
+
+        else:
+            # Email mode: one CID-embedded HTML email per course
+            sent = 0
+            for cid in course_ids:
+                result = _query_course(db, cid, sub_ids=sub_ids)
+                if result is None:
+                    continue
+                course_title, teacher, lectures = result
+
+                cid_images: dict[str, bytes] = {}
+                html = _build_html(course_title, teacher, lectures,
+                                   cid_images=cid_images)
+                plain = _build_plain(course_title, teacher, lectures)
+                subject = f"[iCourse 课程摘要导出] {course_title}"
+
+                print(f"Sending HTML email for {course_title}...")
+                if cid_images:
+                    print(f"  Embedded {len(cid_images)} LaTeX image(s) as CID")
+                _send_html_email(subject, html, plain, cid_images=cid_images)
+                print(f"[OK] Sent: {subject}")
+                sent += 1
+
+            if sent == 0:
+                print("No courses with summaries found – nothing to send.")
+                sys.exit(0)
+    finally:
+        try:
+            db.conn.close()
+        except Exception:
+            pass
+        if temp_db_path:
+            try:
+                os.remove(temp_db_path)
+            except OSError:
+                pass
 
 
 if __name__ == "__main__":
