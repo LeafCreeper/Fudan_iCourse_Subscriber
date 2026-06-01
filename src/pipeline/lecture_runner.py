@@ -61,8 +61,22 @@ class LectureRunner:
         self._summarizer = summarizer
         self._reporter = reporter
         self._ppt = PPTPipeline(db, scheduler, reporter)
+        # Populated by ``run()`` after Phase E so the orchestrator can embed
+        # PPT images in the email without re-downloading from the ephemeral
+        # pptimgurl.  {page_num: image_bytes}; reset at the top of each run.
+        self.last_ppt_images: dict[int, bytes] = {}
 
     # ── Public entry point ──────────────────────────────────────────────
+
+    def discard_ppt_images(self, sub_id: str) -> None:
+        """Drop any cached PPT image bytes for ``sub_id``.
+
+        Belt-and-braces cleanup for the orchestrator's ``finally`` block:
+        if a lecture fails before Phase E grabs ``last_ppt_images``, the
+        bytes cached by an earlier look-ahead ``prefetch_and_ocr`` would
+        otherwise linger until the process exits.
+        """
+        self._ppt.discard_cached_images(str(sub_id))
 
     def run(self, course_id: str, course_title: str, lecture: dict,
             next_info: Optional[tuple[str, str]] = None) -> Optional[str]:
@@ -77,6 +91,7 @@ class LectureRunner:
         date = lecture.get("date", "")
         t_start = time.time()
         self._reporter.lecture_start(course_title, sub_title, date)
+        self.last_ppt_images = {}
 
         existing = self._db.get_lecture(sub_id)
         # ── Phase A — short-circuit if a v2 summary already exists ──────
@@ -113,6 +128,13 @@ class LectureRunner:
         # ── Phase E — drain remaining OCR work ─────────────────────────
         ppt_stats = ppt_handle.drain()
         _ = ppt_stats  # stats are emitted by PPTAsyncHandle.drain via reporter
+
+        # Grab the cached image bytes for OCR-successful pages now, while
+        # they're still in memory.  These ride along into email_items so the
+        # emailer can CID-embed them — pptimgurl points at an internal
+        # iCourse host that's unreachable once the run's WebVPN session ends.
+        self.last_ppt_images = ppt_handle.get_done_images()
+        self._ppt.discard_cached_images(sub_id)  # released to last_ppt_images
 
         # ── Phase E2 — kick off next lecture's OCR (runs during LLM) ───
         # Images were prefetched in Phase C; switch to OCR phase by
@@ -318,7 +340,6 @@ def resummarize_old_lectures(client: "ICourseClient", db: "Database",
                     f"    [WARN] PPT OCR phase failed: "
                     f"{type(e).__name__}: {e}"
                 )
-
             transcript = row.get("transcript") or ""
             if not transcript.strip():
                 reporter.info("    Empty transcript, cannot resummarize.")
@@ -343,6 +364,8 @@ def resummarize_old_lectures(client: "ICourseClient", db: "Database",
 
             if sub_id in seen_sub_ids:
                 continue
+            ppt_images = ppt_pipeline.get_cached_images(sub_id)
+            ppt_pipeline.discard_cached_images(sub_id)
             email_items.append({
                 "sub_id": sub_id,
                 "course_title": course_title,
@@ -350,6 +373,7 @@ def resummarize_old_lectures(client: "ICourseClient", db: "Database",
                 "date": date,
                 "summary": summary,
                 "is_update": True,
+                "ppt_images": ppt_images,
             })
             seen_sub_ids.add(sub_id)
         except Exception:

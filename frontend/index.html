@@ -372,6 +372,12 @@
               <div class="text-xs text-gray-400 mb-1"
                    x-text="'[页 ' + page.page_num + ' @ ' + formatPptTimestamp(page.created_sec) + ']'">
               </div>
+              <div x-show="page.pptimgurl" class="mb-2 text-center">
+                <img :src="page.pptimgurl" :alt="'PPT 页 ' + page.page_num"
+                     class="inline-block max-w-full rounded border border-gray-200"
+                     style="max-height: 400px; object-fit: contain;"
+                     loading="lazy">
+              </div>
               <pre class="whitespace-pre-wrap text-gray-700 font-sans"
                    x-text="page.text || ''"></pre>
             </div>

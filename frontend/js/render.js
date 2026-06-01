@@ -52,11 +52,41 @@ function _restoreFormulas(html, formulas) {
   return html;
 }
 
-function _renderMarkdown(mdText) {
+function _renderMarkdown(mdText, pptImgMap) {
   if (!mdText) return "";
   var stashed = _stashFormulas(mdText);
-  var rawHtml = marked.parse(stashed.text, { breaks: true });
+
+  // Stash PPT image placeholders before markdown conversion.
+  // LLM outputs: ![PPT 页 N](pptimg://N)
+  // We stash them to prevent marked from wrapping the URL in <a> or mangling it.
+  var pptPlaceholders = [];
+  var text = stashed.text.replace(
+    /!\[PPT 页 (\d+)\]\(pptimg:\/\/(\d+)\)/g,
+    function (match, label, pageNum) {
+      var key = "\x00PPTIMG" + pptPlaceholders.length + "\x00";
+      pptPlaceholders.push({ pageNum: parseInt(pageNum), label: label });
+      return key;
+    }
+  );
+
+  var rawHtml = marked.parse(text, { breaks: true });
   var restored = _restoreFormulas(rawHtml, stashed.formulas);
+
+  // Restore PPT image placeholders → <img> tags or strip if no map
+  for (var i = 0; i < pptPlaceholders.length; i++) {
+    var p = pptPlaceholders[i];
+    var imgTag = "";
+    if (pptImgMap && pptImgMap[p.pageNum]) {
+      imgTag =
+        '<div style="text-align:center;margin:12px 0">' +
+        '<img src="' + pptImgMap[p.pageNum] + '" alt="PPT 页 ' + p.pageNum + '" ' +
+        'style="max-width:100%;height:auto;border:1px solid #e0e0e0;border-radius:4px;" ' +
+        'loading="lazy">' +
+        '</div>';
+    }
+    restored = restored.split("\x00PPTIMG" + i + "\x00").join(imgTag);
+  }
+
   return DOMPurify.sanitize(restored);
 }
 
@@ -77,6 +107,7 @@ function _plainSnippet(mdText, maxLen) {
   maxLen = maxLen || 100;
   if (!mdText) return "";
   var text = mdText
+    .replace(/!\[PPT 页 \d+\]\(pptimg:\/\/\d+\)/g, "")
     .replace(/\$\$.+?\$\$/gs, "...")
     .replace(/\\\[.+?\\\]/gs, "...")
     .replace(/\$[^$]+?\$/g, "...")

@@ -36,6 +36,7 @@ invalid / failed pages naturally drop out of the LLM prompt.
 
 from __future__ import annotations
 
+import threading
 from concurrent.futures import Future, as_completed
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -92,6 +93,18 @@ class PPTAsyncHandle:
         self._images = images  # non-None when OCR was deferred
         self._ocr_submitted = False
         self._drained: PPTStats | None = None
+
+    def get_done_images(self) -> dict[int, bytes]:
+        """Return {page_num: image_bytes} for OCR-successful pages.
+
+        Pulls from the owning pipeline's per-sub_id image cache, which is
+        populated by ``_ocr_worker`` across every OCR path (deferred drain,
+        look-ahead prefetch, blocking).  Caller (the LectureRunner / email
+        path) uses this to embed PPT images without re-downloading from the
+        ephemeral pptimgurl.  Best called after ``drain()`` so every OCR
+        future for this lecture has resolved.
+        """
+        return self._pipeline.get_cached_images(self._sub_id)
 
     def drain(self) -> PPTStats:
         """Block until every OCR future resolves; return aggregate stats."""
@@ -154,6 +167,31 @@ class PPTPipeline:
         # Keyed by sub_id; submit() drains them before starting ASR if the
         # pre-submitted OCR hasn't completed yet.
         self._prefetched_ocr: dict[str, list[Future]] = {}
+        # Raw image bytes for pages that OCR'd to status='done', keyed by
+        # sub_id → {page_num: bytes}.  Populated by ``_ocr_worker`` from
+        # whichever pool thread ran the OCR, so access is mutex-guarded.
+        # Consumed by the email path (CID-embedded inline PPT images) which
+        # can't re-download from pptimgurl (internal/ephemeral URL).  The
+        # owning LectureRunner discards the entry after building email_items.
+        self._image_cache: dict[str, dict[int, bytes]] = {}
+        self._image_cache_lock = threading.Lock()
+
+    # ── PPT image byte cache (for email embedding) ──────────────────────
+
+    def _cache_image(self, sub_id: str, page_num: int, img: bytes) -> None:
+        """Stash one OCR-successful image's bytes for later embedding."""
+        with self._image_cache_lock:
+            self._image_cache.setdefault(sub_id, {})[page_num] = img
+
+    def get_cached_images(self, sub_id: str) -> dict[int, bytes]:
+        """Return a snapshot copy of {page_num: bytes} cached for ``sub_id``."""
+        with self._image_cache_lock:
+            return dict(self._image_cache.get(sub_id, {}))
+
+    def discard_cached_images(self, sub_id: str) -> None:
+        """Drop the cached image bytes for ``sub_id`` to release memory."""
+        with self._image_cache_lock:
+            self._image_cache.pop(sub_id, None)
 
     # ── Public entry points ─────────────────────────────────────────────
 
@@ -340,6 +378,15 @@ class PPTPipeline:
         writes go through ``Database._lock`` so concurrent workers don't
         race on the same row.
 
+        On a ``done`` classification the raw ``image_bytes`` are stashed in
+        the pipeline-level image cache (``_cache_image``) so the email /
+        frontend embed path can reuse them without re-downloading from the
+        ephemeral ``pptimgurl`` (which is only reachable while the WebVPN
+        session is live).  This is done here — rather than in ``drain()`` —
+        so it covers every OCR path uniformly: the deferred ``drain()``
+        path, the ``prefetch_and_ocr`` look-ahead path (whose futures are
+        drained-and-discarded by the next ``submit``), and ``run_blocking``.
+
         The reporter tick fires for every outcome (done/invalid/failed) so
         the printed page/s reflects total OCR throughput, not just
         successful pages — otherwise a run with many "invalid" classroom
@@ -356,6 +403,8 @@ class PPTPipeline:
             return page_num, "failed"
         status = "invalid" if is_invalid_page(text) else "done"
         self._db.update_ppt_page(sub_id, page_num, text, status)
+        if status == "done":
+            self._cache_image(sub_id, page_num, image_bytes)
         if self._reporter:
             self._reporter.ocr_progress_tick(sub_id)
         return page_num, status

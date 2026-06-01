@@ -28,6 +28,19 @@ def _format_timestamp(seconds: int) -> str:
     return f"{m:02d}:{s:02d}"
 
 
+def _ppt_image_tag(page: dict) -> str:
+    """Return an image placeholder tag if the page has an image URL.
+
+    The tag uses the format `![PPT 页 N](pptimg://N)` which is a valid
+    Markdown image syntax with a custom scheme.  Post-processing replaces
+    `pptimg://N` with actual image data (CID for email, base64 for frontend).
+    """
+    page_num = page.get("page_num", "")
+    if page.get("pptimgurl") and page_num:
+        return f"![PPT 页 {page_num}](pptimg://{page_num})"
+    return ""
+
+
 def assemble_bucketed(
     transcript_segments: list[dict], ppt_pages: list[dict],
 ) -> str:
@@ -71,7 +84,11 @@ def assemble_bucketed(
                 tag = f"[页 {page_num} @ {ts}]" if page_num else f"[@ {ts}]"
                 text = clean_ppt_text(p.get("text") or "").strip()
                 if text:
-                    out.append(f"{tag}\n{text}")
+                    img_tag = _ppt_image_tag(p)
+                    line = f"{tag}\n{text}"
+                    if img_tag:
+                        line += f"\n{img_tag}"
+                    out.append(line)
             out.append("")
 
     return "\n".join(out).strip()
@@ -94,7 +111,11 @@ def assemble_flat(transcript: str, ppt_pages: list[dict]) -> str:
             tag = f"[页 {page_num} @ {ts}]" if page_num else f"[@ {ts}]"
             text = (p.get("text") or "").strip()
             if text:
-                parts.append(f"{tag}\n{text}")
+                img_tag = _ppt_image_tag(p)
+                line = f"{tag}\n{text}"
+                if img_tag:
+                    line += f"\n{img_tag}"
+                parts.append(line)
         parts.append("")
     return "\n".join(parts).strip()
 

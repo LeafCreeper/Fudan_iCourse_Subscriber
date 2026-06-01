@@ -155,8 +155,9 @@ function _getLecture(subId) {
 function _getPptPages(subId) {
   // Only return done pages with non-empty text — keeps the PPT viewer
   // free of pending placeholders and dropped pages.
+  // pptimgurl is included for rendering PPT images in the summary view.
   return _queryAll(`
-    SELECT page_num, created_sec, text
+    SELECT page_num, created_sec, pptimgurl, text
     FROM ppt_pages
     WHERE sub_id = ? AND ocr_status = 'done'
       AND text IS NOT NULL AND text != ''

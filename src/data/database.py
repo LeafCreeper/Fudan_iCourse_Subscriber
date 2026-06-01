@@ -355,7 +355,7 @@ class Database:
     def get_done_ppt_pages(self, sub_id: str) -> list[dict]:
         """Successfully-OCR'd pages, sorted by time. Used by the bucketer."""
         rows = self.conn.execute(
-            """SELECT page_num, created_sec, text
+            """SELECT page_num, created_sec, pptimgurl, text
                FROM ppt_pages
                WHERE sub_id = ? AND ocr_status = 'done'
                  AND text IS NOT NULL AND text != ''

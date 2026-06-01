@@ -111,6 +111,9 @@ _MIN_INLINE_HEIGHT = 13  # minimum logical height for inline formulas (px)
 
 _IMAGE_CACHE: dict[str, tuple] = {}
 
+# Regex to match LLM-generated PPT image placeholders: ![PPT 页 N](pptimg://N)
+_PPTIMG_RE = re.compile(r"!\[PPT 页 (\d+)\]\(pptimg://(\d+)\)")
+
 
 def _fetch_latex_image(url: str, dpi: int = 300) -> tuple:
     """Fetch rendered LaTeX image, return (width, height, png_bytes).
@@ -153,18 +156,31 @@ def _prefetch_latex_images(urls: list[str], dpi: int = 300) -> None:
             future.result()  # trigger any exception logging inside _fetch_latex_image
 
 
-def _md_to_html(md_text: str, cid_images: dict | None = None) -> str:
+def _strip_pptimg_placeholders(md_text: str) -> str:
+    """Remove `![PPT 页 N](pptimg://N)` lines from plain-text output."""
+    return _PPTIMG_RE.sub("", md_text)
+
+
+def _md_to_html(md_text: str, cid_images: dict | None = None,
+                ppt_images: dict[int, bytes] | None = None) -> str:
     """Convert Markdown to styled HTML, rendering LaTeX math as images.
 
-    Processing order: extract LaTeX → markdown convert → restore as <img>.
-    This prevents the markdown engine from corrupting backslash escapes.
+    Processing order: extract LaTeX → stash PPT images → markdown convert
+    → restore LaTeX as <img> → restore PPT images as <img>.
+    This prevents the markdown engine from corrupting backslash escapes
+    or mangling the pptimg:// scheme in image tags.
 
     Args:
         md_text: Markdown source text.
         cid_images: When provided (dict), download images and embed via CID
                     references instead of external URLs.  The dict is populated
-                    with {cid_name: png_bytes} entries for the caller to attach
-                    to the MIME message.
+                    with {cid_name: (bytes, mime_type)} entries for the caller
+                    to attach to the MIME message.
+        ppt_images: Optional {page_num: image_bytes} map for resolving
+                    `pptimg://N` placeholders in the Markdown.  Bytes are
+                    captured in-memory during the OCR phase — the source
+                    pptimgurl is an internal iCourse host unreachable at
+                    send time.
     """
     latex_map: dict[str, str] = {}
     counter = 0
@@ -201,6 +217,19 @@ def _md_to_html(md_text: str, cid_images: dict | None = None) -> str:
     text = re.sub(r"(?<!\$)\$(?!\$)(.+?)(?<!\$)\$(?!\$)", _stash, text)
     # 4) \(...\) inline formulas (normalize to $...$)
     text = re.sub(r"\\\((.+?)\\\)", _stash_inline, text)
+
+    # 5) Stash PPT image placeholders before markdown conversion
+    ppt_map: dict[str, str] = {}  # placeholder key → original markdown
+    ppt_counter = 0
+
+    def _stash_ppt(match):
+        nonlocal ppt_counter
+        key = f"\x00PPTIMG{ppt_counter}\x00"
+        ppt_counter += 1
+        ppt_map[key] = match.group(0)
+        return key
+
+    text = _PPTIMG_RE.sub(_stash_ppt, text)
 
     html = markdown.markdown(
         text,
@@ -259,6 +288,75 @@ def _md_to_html(md_text: str, cid_images: dict | None = None) -> str:
 
         html = html.replace(key, img_tag)
 
+    # Restore PPT image placeholders → actual <img> tags (or strip)
+    if ppt_map:
+        html = _resolve_ppt_placeholders(html, ppt_map, ppt_images,
+                                         cid_images)
+
+    return html
+
+
+def _resolve_ppt_placeholders(
+    html: str,
+    ppt_map: dict[str, str],
+    ppt_images: dict[int, bytes] | None,
+    cid_images: dict | None,
+) -> str:
+    """Replace stashed PPT placeholder keys with actual image tags.
+
+    Markdown conversion has already run, so the stashed keys appear in the
+    HTML output unchanged.  For each key, extract the page_num from the
+    original `![PPT 页 N](pptimg://N)`, look up the in-memory image bytes
+    (captured during the OCR phase), and CID-embed.  Pages without cached
+    bytes — e.g. recovered-from-DB unsent items — are stripped silently.
+    """
+    for key, original in ppt_map.items():
+        m = _PPTIMG_RE.match(original)
+        if not m:
+            html = html.replace(key, "")
+            continue
+        page_num = int(m.group(2))
+        img_data = (ppt_images or {}).get(page_num)
+
+        if not img_data:
+            html = html.replace(key, "")
+            continue
+
+        try:
+            img = Image.open(BytesIO(img_data))
+            fmt = (img.format or "PNG").upper()
+            w, h = img.size
+        except Exception as e:
+            print(f"[PPT Image] Bad image bytes for page {page_num}: {e}")
+            html = html.replace(key, "")
+            continue
+        mime_type = "image/jpeg" if fmt == "JPEG" else "image/png"
+
+        if cid_images is not None:
+            cid = f"ppt-{page_num}-{uuid.uuid4().hex[:8]}"
+            cid_images[cid] = (img_data, mime_type)
+            src = f"cid:{cid}"
+        else:
+            # No CID sink (shouldn't happen for email) → drop the image
+            # since there's no externally reachable URL to fall back to.
+            html = html.replace(key, "")
+            continue
+
+        if w > 600:
+            scale = 600 / w
+            w = 600
+            h = int(h * scale)
+
+        img_tag = (
+            f'<div style="text-align:center;margin:12px 0">'
+            f'<img src="{src}" alt="PPT 页 {page_num}" '
+            f'width="{w}" height="{h}" '
+            f'style="max-width:100%;height:auto;border:1px solid #e0e0e0;'
+            f'border-radius:4px;">'
+            f'</div>'
+        )
+        html = html.replace(key, img_tag)
+
     return html
 
 
@@ -289,14 +387,19 @@ class Emailer:
         the email via CID attachments, so they display on all clients
         (including mobile) without loading external images.
 
+        PPT slide images referenced via `pptimg://N` placeholders in the
+        summary are embedded as CID attachments from in-memory bytes
+        captured during the OCR phase (the source pptimgurl points at an
+        internal iCourse host that's unreachable at send time).
+
         Args:
             items: List of dicts, each with keys:
                    course_title, sub_title, date, summary
-                   Optional key:
-                   is_update — bool, True for re-summarized lectures (v2
-                               PPT-aware format replacing an older v1 summary).
-                               Adds an "（含 PPT 识别·更新）" subject suffix and
-                               an inline 更新 badge per affected lecture.
+                   Optional keys:
+                   is_update — bool, True for re-summarized lectures.
+                   ppt_images — dict[int, bytes] mapping page_num to raw
+                                image bytes (captured in-memory during OCR)
+                                for resolving PPT image placeholders.
 
         Returns:
             True if email was sent successfully, False otherwise.
@@ -328,7 +431,9 @@ class Emailer:
                 plain_sections.append(
                     f"\n--- {tag}{lec['sub_title']} ({lec['date']}) ---\n"
                 )
-                plain_sections.append(lec["summary"])
+                plain_sections.append(
+                    _strip_pptimg_placeholders(lec["summary"])
+                )
         plain = "\n".join(plain_sections)
 
         # HTML (Markdown → styled HTML with CID-embedded LaTeX images)
@@ -372,7 +477,8 @@ class Emailer:
                     f"<small>({escape(lec['date'])})</small></h3>"
                 )
                 body_parts.append(
-                    _md_to_html(lec["summary"], cid_images=cid_images)
+                    _md_to_html(lec["summary"], cid_images=cid_images,
+                                ppt_images=lec.get("ppt_images"))
                 )
                 body_parts.append("<hr>")
 
@@ -396,16 +502,25 @@ class Emailer:
         msg_alt.attach(MIMEText(html, "html", "utf-8"))
         msg.attach(msg_alt)
 
-        # Attach CID images
-        for cid, png_data in cid_images.items():
-            img_part = MIMEImage(png_data, "png")
+        # Attach CID images (LaTeX PNGs and PPT slide images)
+        for cid, payload in cid_images.items():
+            if isinstance(payload, tuple):
+                # PPT image: (bytes, mime_type)
+                img_bytes, mime = payload
+                maintype, subtype = mime.split("/", 1)
+                img_part = MIMEImage(img_bytes, subtype)
+            else:
+                # LaTeX image: raw PNG bytes
+                img_part = MIMEImage(payload, "png")
+                maintype, subtype = "image", "png"
             img_part.add_header("Content-ID", f"<{cid}>")
             img_part.add_header("Content-Disposition", "inline",
-                                filename=f"{cid}.png")
+                                filename=f"{cid}.{subtype}")
             msg.attach(img_part)
 
         if cid_images:
-            print(f"[Emailer] Embedded {len(cid_images)} LaTeX images as CID")
+            print(f"[Emailer] Embedded {len(cid_images)} images as CID "
+                  f"(LaTeX + PPT)")
 
         # Retry with exponential backoff
         for attempt in range(3):

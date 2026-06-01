@@ -893,7 +893,17 @@ document.addEventListener("alpine:init", () => {
     },
 
     // Template helpers
-    renderMd(s) { return ICS.render.renderMarkdown(s); },
+    // Build a {page_num: pptimgurl} map from currentPptPages for the
+    // summary renderer to resolve pptimg://N placeholders.
+    _pptImgMap() {
+      var map = {};
+      for (var i = 0; i < this.currentPptPages.length; i++) {
+        var p = this.currentPptPages[i];
+        if (p.pptimgurl) map[p.page_num] = p.pptimgurl;
+      }
+      return Object.keys(map).length ? map : null;
+    },
+    renderMd(s) { return ICS.render.renderMarkdown(s, this._pptImgMap()); },
     activateKaTeX(el) { ICS.render.activateKaTeX(el); },
     snippet(s, n) { return ICS.render.plainSnippet(s, n); },
     highlight(text, q) { return _highlightSnippet(text, q); },

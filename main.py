@@ -176,6 +176,7 @@ def _drive_lectures(client: ICourseClient, db: Database,
                     "sub_title": lecture.get("sub_title", sub_id),
                     "date": lecture.get("date", ""),
                     "summary": summary,
+                    "ppt_images": runner.last_ppt_images,
                 })
         except Exception:
             reporter.lecture_error(sub_id)
@@ -186,6 +187,9 @@ def _drive_lectures(client: ICourseClient, db: Database,
             # PPTPipeline.submit released the cache.
             scheduler.image_cache.discard(sub_id)
             scheduler.audio_downloader.release(sub_id)
+            # Likewise drop any cached PPT image bytes (populated by an
+            # earlier look-ahead OCR) if Phase E never grabbed them.
+            runner.discard_ppt_images(sub_id)
 
 
 def _send_email(emailer: Emailer | None, db: Database, reporter: Reporter,
@@ -202,6 +206,11 @@ def _send_email(emailer: Emailer | None, db: Database, reporter: Reporter,
                     "sub_title": row["sub_title"],
                     "date": row["date"],
                     "summary": row["summary"],
+                    # Recovered-from-DB items have no in-memory image bytes
+                    # (they were OCR'd on a prior run). The emailer strips
+                    # any leftover pptimg:// placeholders so the text stays
+                    # clean; full PPT images remain viewable in the frontend.
+                    "ppt_images": {},
                 })
         reporter.email_recovered_unsent(len(unsent))
 
