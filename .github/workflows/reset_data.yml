@@ -39,6 +39,9 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
       - name: Fetch database from data branch
         run: |
           mkdir -p data
