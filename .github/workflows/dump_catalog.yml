@@ -1,0 +1,113 @@
+name: Dump Course Catalog
+
+on:
+  workflow_dispatch:
+    inputs:
+      course_id:
+        description: "Optional course ID(s) to restrict the dump, comma-separated (leave empty for ALL courses)"
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  dump:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Fetch database from data branch
+        run: |
+          mkdir -p data
+          git fetch origin data --depth=1
+          if git cat-file -e origin/data:data/icourse-index.enc 2>/dev/null; then
+            mkdir -p data/sharded/shards
+            git show origin/data:data/icourse-index.enc > data/sharded/icourse-index.enc
+            shard_paths=$(git ls-tree -r --name-only origin/data | grep '^data/shards/' || true)
+            for path in $shard_paths; do
+              base=$(basename "$path")
+              git show "origin/data:$path" > "data/sharded/shards/$base"
+            done
+            echo "Loaded $(ls data/sharded/shards 2>/dev/null | wc -l) shard(s)."
+          elif git cat-file -e origin/data:data/icourse.db.gz.enc 2>/dev/null; then
+            git show origin/data:data/icourse.db.gz.enc > data/icourse.db.gz.enc
+            echo "Loaded legacy compressed database."
+          elif git cat-file -e origin/data:data/icourse.db.enc 2>/dev/null; then
+            git show origin/data:data/icourse.db.enc > data/icourse.db.enc
+            echo "Loaded legacy uncompressed database."
+          else
+            echo "::error::No database found on data branch."
+            exit 1
+          fi
+
+      - name: Decode database
+        env:
+          STUID: ${{ secrets.STUID }}
+          UISPSW: ${{ secrets.UISPSW }}
+          DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+        run: |
+          if [ -f data/sharded/icourse-index.enc ]; then
+            python scripts/db_shard.py reassemble data/sharded data/icourse.db
+            echo "Reassembled sharded database."
+            exit 0
+          fi
+
+          NEW_KEY=$(printf '%s' "ICSv2:${STUID}:${UISPSW}" | sha256sum | cut -d' ' -f1)
+          LEGACY_KEY="${STUID}${UISPSW}${DASHSCOPE_API_KEY}${SMTP_PASSWORD}"
+
+          decrypt_blob() {
+            local in_path="$1"
+            local out_path="$2"
+            if openssl enc -aes-256-cbc -d -pbkdf2 -iter 100000 \
+                 -in "$in_path" -out "$out_path" \
+                 -pass pass:"$NEW_KEY" 2>/dev/null; then
+              return 0
+            fi
+            openssl enc -aes-256-cbc -d -pbkdf2 \
+              -in "$in_path" -out "$out_path" \
+              -pass pass:"$LEGACY_KEY" 2>/dev/null
+          }
+
+          if [ -f data/icourse.db.gz.enc ]; then
+            decrypt_blob data/icourse.db.gz.enc data/icourse.db.gz
+            gzip -d data/icourse.db.gz
+          else
+            decrypt_blob data/icourse.db.enc data/icourse.db
+          fi
+          echo "Database decrypted."
+
+      - name: Dump course catalog to Markdown
+        env:
+          DUMP_COURSE_ID: ${{ inputs.course_id }}
+        run: |
+          if [ -n "$DUMP_COURSE_ID" ]; then
+            python scripts/dump_course_catalog.py \
+              --db data/icourse.db \
+              --out course_catalog.md \
+              --course-id "$DUMP_COURSE_ID"
+          else
+            python scripts/dump_course_catalog.py \
+              --db data/icourse.db \
+              --out course_catalog.md
+          fi
+          echo "::group::course_catalog.md"
+          cat course_catalog.md
+          echo "::endgroup::"
+
+      - name: Upload Markdown artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: course-catalog
+          path: course_catalog.md
+          if-no-files-found: error
+          retention-days: 30
