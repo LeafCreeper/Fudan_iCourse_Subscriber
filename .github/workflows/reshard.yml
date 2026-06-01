@@ -18,7 +18,15 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Cache Python packages
+        id: cache-pip
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.pythonLocation }}/lib/python*/site-packages
+          key: pip-${{ hashFiles('requirements.txt') }}
+
       - name: Install Python dependencies
+        if: steps.cache-pip.outputs.cache-hit != 'true'
         run: pip install -r requirements.txt
 
       - name: Fetch encrypted database from data branch
