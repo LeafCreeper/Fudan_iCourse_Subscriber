@@ -143,7 +143,6 @@ document.addEventListener("alpine:init", () => {
       const s = _loadSettings();
       this.repoOwner = s.owner || (detected?.owner ?? "");
       this.repoName = s.repo || (detected?.repo ?? "");
-      this.dataBranch = s.branch || "data";
       const creds = _loadCreds();
       if (!creds) { this.view = "setup"; return; }
       await this._loadDB(creds);
@@ -346,6 +345,9 @@ document.addEventListener("alpine:init", () => {
     async testAndSave() {
       this.setupTesting = true; this.setupError = "";
       try {
+        if (!this.setup.stuid || !this.setup.uispsw) {
+          throw new Error("请输入学号和密码");
+        }
         // Validate credentials by trying to decrypt index.enc
         var metaRes = await fetch(_DATA_BASE + "meta.json");
         if (!metaRes.ok) throw new Error("无法加载 meta.json");
@@ -353,10 +355,10 @@ document.addEventListener("alpine:init", () => {
         var pw = await ICS.crypto.buildPasswordV3(this.setup);
         var mk = await ICS.crypto.deriveV3MasterKey(pw, meta.pbkdf2_salt, meta.iterations);
         var indexEnc = await _v3Fetch("index.enc");
-        var indexPt = await ICS.crypto.hkdfDecrypt(indexEnc, mk);
+        await ICS.crypto.hkdfDecrypt(indexEnc, mk);
         // If decryption succeeds without throwing, creds are valid
         _saveCreds({ ...this.setup });
-        _saveSettings({ owner: this.repoOwner, repo: this.repoName, branch: this.dataBranch });
+        _saveSettings({ owner: this.repoOwner, repo: this.repoName });
         await this._loadDB({ ...this.setup });
       } catch (e) {
         this.setupError = "凭据验证失败: " + (e.message || "解密失败");
@@ -372,7 +374,7 @@ document.addEventListener("alpine:init", () => {
     },
     async saveSettingsAndReload() {
       _saveCreds({ ...this.settingsForm });
-      _saveSettings({ owner: this.repoOwner, repo: this.repoName, branch: this.dataBranch });
+      _saveSettings({ owner: this.repoOwner, repo: this.repoName });
       this._toast("Saved. Reloading...", "success");
       const c = _loadCreds();
       if (c) await this._loadDB(c);
