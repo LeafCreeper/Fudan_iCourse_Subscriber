@@ -120,7 +120,7 @@ document.addEventListener("alpine:init", () => {
     setupError: "", setupTesting: false,
     settingsForm: {}, showSecrets: {},
     exportDialogOpen: false, exportSelection: {}, exportingPdf: false,
-    repoOwner: "", repoName: "", dataBranch: "data",
+    repoOwner: "", repoName: "",
     _history: [],
     allCoursesTerms: [],
     subsTerms: [], subsDepts: [], deptSearchQuery: "",
