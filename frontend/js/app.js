@@ -1,6 +1,9 @@
 /**
  * Alpine.js app — all state, routing, and view logic for the iCourse frontend.
  * References ICS.crypto, ICS.github, ICS.db, ICS.render globals.
+ *
+ * V3: Data loaded from co-located encrypted JSON shards (built at deploy time).
+ * No more GitHub API tree walk for data; only GitHub API for Secrets + workflow triggers.
  */
 
 /* ── Gzip helpers (Compression Streams API) ── */
@@ -26,61 +29,12 @@ async function _gunzip(compressedBytes) {
   return result;
 }
 
-/* ── IndexedDB cache for decrypted shards (keyed by git blob sha) ────
-   Shard contents are content-addressed: a shard's git blob sha changes
-   only when its bytes change, so we can keep decrypted bytes around and
-   skip the network + decrypt + decompress chain on subsequent loads.
-*/
-var _idbName = "ics_cache_v2";
-// Cache the open Promise — every shard load fires _idbGet + _idbPut, and
-// without this each call opens its own connection.  Reopening costs ~10ms
-// on cold caches and accumulates fast over 100+ shard reads.
-var _idbPromise = null;
-
-function _idbOpen() {
-  if (_idbPromise) return _idbPromise;
-  _idbPromise = new Promise(function(resolve, reject) {
-    var req = indexedDB.open(_idbName, 1);
-    req.onupgradeneeded = function() { req.result.createObjectStore("blobs"); };
-    req.onsuccess = function() { resolve(req.result); };
-    req.onerror = function() {
-      // Don't cache failed opens — next call retries cleanly.
-      _idbPromise = null;
-      reject(req.error);
-    };
-  });
-  return _idbPromise;
-}
-
-async function _idbGet(key) {
-  var db = await _idbOpen();
-  return new Promise(function(resolve) {
-    var tx = db.transaction("blobs", "readonly");
-    var req = tx.objectStore("blobs").get(key);
-    req.onsuccess = function() { resolve(req.result || null); };
-    req.onerror = function() { resolve(null); };
-  });
-}
-
-async function _idbPut(key, value) {
-  var db = await _idbOpen();
-  return new Promise(function(resolve) {
-    var tx = db.transaction("blobs", "readwrite");
-    tx.objectStore("blobs").put(value, key);
-    tx.oncomplete = function() { resolve(); };
-    tx.onerror = function() { resolve(); };
-  });
-}
-
 /* ── Credential helpers (localStorage) ── */
 const _LS = "ics_";
 const _loadCreds = () => { try { return JSON.parse(localStorage.getItem(_LS + "creds")); } catch { return null; } };
 const _saveCreds = (c) => localStorage.setItem(_LS + "creds", JSON.stringify(c));
 const _loadSettings = () => { try { return JSON.parse(localStorage.getItem(_LS + "settings")) || {}; } catch { return {}; } };
 const _saveSettings = (s) => localStorage.setItem(_LS + "settings", JSON.stringify(s));
-/* Starred-course IDs are per-browser (localStorage). The school side
-   doesn't need to know; the user just wants their favorites pinned to
-   the top of their own view. */
 const _loadStarred = () => {
   try { return new Set(JSON.parse(localStorage.getItem(_LS + "starred")) || []); }
   catch { return new Set(); }
@@ -125,9 +79,6 @@ function _formatTimestamp(seconds) {
   return pad(m) + ":" + pad(s);
 }
 
-/* Three-state detail view: summary → transcript → ppt → summary.
-   The button label always shows the *next* state so the user can read it
-   as an action ("切换到转录"). */
 const _DETAIL_VIEW_CYCLE = ["summary", "transcript", "ppt"];
 const _DETAIL_VIEW_LABEL = {
   summary: "摘要",
@@ -135,111 +86,23 @@ const _DETAIL_VIEW_LABEL = {
   ppt: "PPT 识别",
 };
 
-/* ── Sharded loading helpers ── */
-async function _loadShard(owner, repo, entry, password, token) {
-  // Returns { bytes, downloaded: bool } — downloaded=true means we hit
-  // the network; false means IndexedDB cache hit (instant).
-  var cacheKey = "shard:" + entry.sha;
-  var cached = await _idbGet(cacheKey);
-  if (cached) return { bytes: cached, downloaded: false };
+/* ── Data path (relative to index.html) ── */
+var _DATA_BASE = "data/";
 
-  var encBytes = await ICS.github.fetchBlobBytes(owner, repo, entry.sha, token);
-  var gzipped = await ICS.crypto.decrypt(
-    encBytes, password, ICS.crypto.NEW_ITERATIONS,
-  );
-  if (!ICS.crypto.isGzip(gzipped)) {
-    throw new Error(
-      "Shard '" + entry.name + "' decrypted to non-gzip bytes — wrong key?"
-    );
-  }
-  var dbBytes = await _gunzip(gzipped);
-  await _idbPut(cacheKey, dbBytes);
-  return { bytes: dbBytes, downloaded: true };
+/* ── V3 master key (held in memory after login) ── */
+var _masterKey = null;
+
+async function _v3Fetch(path) {
+  var res = await fetch(_DATA_BASE + path);
+  if (!res.ok) throw new Error("Failed to fetch " + path + ": " + res.status);
+  return new Uint8Array(await res.arrayBuffer());
 }
 
-async function _fetchAndDecryptIndex(owner, repo, indexSha, password, token) {
-  var indexEnc = await ICS.github.fetchBlobBytes(owner, repo, indexSha, token);
-  var indexBytes = await ICS.crypto.decrypt(
-    indexEnc, password, ICS.crypto.NEW_ITERATIONS,
-  );
-  if (!ICS.crypto.isJsonObj(indexBytes)) {
-    throw new Error("Shard index decrypted to non-JSON bytes — wrong key?");
-  }
-  return JSON.parse(new TextDecoder().decode(indexBytes));
-}
-
-async function _loadFromShardManifest(manifest, owner, repo, password, token, progress) {
-  // 0) Check if the full merged DB is already cached for this commit SHA.
-  //    If the data branch hasn't moved, we can skip ALL shard loading.
-  var mergedKey = "merged:" + manifest.commitSha;
-  var cachedMerged = await _idbGet(mergedKey);
-  if (cachedMerged) {
-    await ICS.db.initDB(cachedMerged);
-    return;
-  }
-
-  // 1) Load index: check if index SHA matches cached → reuse decrypted JSON;
-  //    otherwise fetch + decrypt + cache for next time.
-  var cachedIndexSha = null;
-  try { cachedIndexSha = localStorage.getItem(_LS + "indexSha"); } catch (e) {}
-
-  var index = null;
-  if (manifest.index.sha === cachedIndexSha) {
-    index = await _idbGet("index:v2:" + manifest.index.sha);
-  }
-
-  if (!index) {
-    index = await _fetchAndDecryptIndex(
-      owner, repo, manifest.index.sha, password, token,
-    );
-    await _idbPut("index:v2:" + manifest.index.sha, index);
-    try { localStorage.setItem(_LS + "indexSha", manifest.index.sha); } catch (e) {}
-  }
-
-  // 2) Pull every shard — skip cache hits, download only changed ones.
-  await ICS.db.initEmpty();
-  var total = (index.shards || []).length;
-  var downloaded = 0;
-  for (var i = 0; i < total; i++) {
-    var shardMeta = index.shards[i];
-    var entry = manifest.shards.find(function (s) { return s.name === shardMeta.name; });
-    if (!entry) {
-      console.warn("Shard listed in index but missing from tree:", shardMeta.name);
-      continue;
-    }
-    var result = await _loadShard(owner, repo, entry, password, token);
-    if (result.downloaded) {
-      downloaded++;
-      if (progress) progress(downloaded, total, shardMeta.name);
-    }
-    await ICS.db.attachShard(result.bytes);
-  }
-  if (progress && downloaded === 0) progress(0, total, "");
-
-  // 3) Cache the merged DB in IndexedDB so next load with the same commit
-  //    SHA skips EVERYTHING — no index fetch, no shard iteration, no merge.
-  try {
-    var merged = ICS.db.exportDB();
-    await _idbPut(mergedKey, merged);
-  } catch (e) { /* non-critical — silently skip */ }
-}
-
-async function _loadFromLegacyBlob(manifest, owner, repo, secrets, token) {
-  // Single-file fallback for users still on the pre-shard data branch.
-  var encBytes = await ICS.github.fetchBlobBytes(
-    owner, repo, manifest.legacy.sha, token,
-  );
-  var validator = manifest.legacy.compressed
-    ? ICS.crypto.isGzip
-    : ICS.crypto.isSqlite;
-  var fallback = await ICS.crypto.decryptWithFallback(
-    encBytes, secrets, validator,
-  );
-  var bytes = fallback.data;
-  if (manifest.legacy.compressed) {
-    bytes = await _gunzip(bytes);
-  }
-  await ICS.db.initDB(bytes);
+async function _v3Decrypt(path) {
+  var enc = await _v3Fetch(path);
+  var compressed = await ICS.crypto.hkdfDecrypt(enc, _masterKey);
+  var decompressed = await _gunzip(compressed);
+  return JSON.parse(new TextDecoder().decode(decompressed));
 }
 
 /* ── Alpine app ── */
@@ -259,12 +122,6 @@ document.addEventListener("alpine:init", () => {
     exportDialogOpen: false, exportSelection: {}, exportingPdf: false,
     repoOwner: "", repoName: "", dataBranch: "data",
     _history: [],
-    /* Subscriptions editor state — three-column layout:
-       left (subscribed) | middle (catalog search) | right (single-run).
-       The left column persists to GitHub Secret on demand; the right
-       column is session-only and cleared after triggering a workflow.
-       Columns are driven by SQL queries against the in-memory shard DB
-       so we never hold the full 20k-row catalog in JS. */
     allCoursesTerms: [],
     subsTerms: [], subsDepts: [], deptSearchQuery: "",
     subsSearchTitle: "", subsSearchTeacher: "",
@@ -277,8 +134,9 @@ document.addEventListener("alpine:init", () => {
     _subsFilterTimer: null, _deptFilterTimer: null,
     subsSaving: false, subsError: "",
     singleRunTriggering: false,
-    /* Per-browser pinned-courses set, lazily synced to localStorage. */
     starred: _loadStarred(),
+    _catalogLoaded: false,
+    _searchIndexLoaded: false,
 
     async init() {
       const detected = ICS.github.detectRepo();
@@ -294,41 +152,29 @@ document.addEventListener("alpine:init", () => {
     async _loadDB(creds) {
       this.view = "loading"; this.error = null;
       try {
-        this.loadingMsg = "Connecting to GitHub API...";
-        var manifest = await ICS.github.fetchShardManifest(
-          this.repoOwner, this.repoName, this.dataBranch, creds.token,
+        // 1) Fetch meta.json (plaintext)
+        this.loadingMsg = "Loading metadata...";
+        var metaRes = await fetch(_DATA_BASE + "meta.json");
+        if (!metaRes.ok) throw new Error("Failed to load meta.json: " + metaRes.status);
+        var meta = await metaRes.json();
+
+        // 2) Derive master key (one-time PBKDF2)
+        this.loadingMsg = "Deriving decryption key...";
+        var pw = await ICS.crypto.buildPasswordV3(creds);
+        _masterKey = await ICS.crypto.deriveV3MasterKey(
+          pw, meta.pbkdf2_salt, meta.iterations
         );
-        this.commitSha = manifest.commitSha;
 
-        if (manifest.format === "sharded") {
-          this.loadingMsg = "Deriving decryption key...";
-          var pw = await ICS.crypto.buildPasswordV2(creds);
+        // 3) Decrypt index
+        this.loadingMsg = "Decrypting index...";
+        var indexData = await _v3Decrypt("index.enc");
+        ICS.db.initFromIndex(indexData);
 
-          this.loadingMsg = "Loading index...";
-          var self = this;
-          await _loadFromShardManifest(
-            manifest, this.repoOwner, this.repoName, pw, creds.token,
-            function (i, n, name) {
-              if (i === 0) {
-                self.loadingMsg = "All " + n + " shards unchanged — instant load.";
-              } else {
-                self.loadingMsg = "Downloading shard " + i + "/" + n
-                  + " (" + name + ")...";
-              }
-            },
-          );
-        } else {
-          this.loadingMsg = "Downloading + decrypting legacy database...";
-          await _loadFromLegacyBlob(
-            manifest, this.repoOwner, this.repoName, creds, creds.token,
-          );
-        }
-
-        var sorted = this._sortCoursesByStar(ICS.db.getCourses());
-        this.courses = sorted;
+        // 4) Show courses
+        this.courses = this._sortCoursesByStar(ICS.db.getCourses());
         this.view = "courses";
         var self = this;
-        this.$nextTick(function () { self.courses = self._sortCoursesByStar(self.courses); });
+        this.$nextTick(function() { self.courses = self._sortCoursesByStar(self.courses); });
       } catch (e) {
         this.error = e.message;
         this.view = "error";
@@ -340,7 +186,7 @@ document.addEventListener("alpine:init", () => {
       this._history.push({ view: this.view, courseId: this.currentCourse?.course_id, lectureId: this.currentLecture?.sub_id });
       this._go(view, params);
     },
-    _go(view, params) {
+    async _go(view, params) {
       params = params || {};
       this.error = null;
       if (view === "courses") {
@@ -351,24 +197,43 @@ document.addEventListener("alpine:init", () => {
         this.lectures = ICS.db.getLectures(params.courseId);
       }
       else if (view === "detail" && params.subId) {
+        // Lazy-load lecture content if not yet loaded
+        if (!ICS.db.isLectureLoaded(params.subId)) {
+          try {
+            await ICS.db.loadLectureContent(params.subId, async function(subId) {
+              return await _v3Decrypt("lectures/" + subId + ".enc");
+            });
+          } catch (e) {
+            console.warn("Failed to load lecture content:", e);
+          }
+        }
         this.currentLecture = ICS.db.getLecture(params.subId);
-        this.currentPptPages = this.currentLecture
-          ? ICS.db.getPptPages(this.currentLecture.sub_id)
-          : [];
+        // Load PPT pages for the course (lazy)
+        if (this.currentLecture) {
+          var courseId = this.currentLecture.course_id;
+          try {
+            await ICS.db.loadPptPages(courseId, async function(cid) {
+              return await _v3Decrypt("ppt/" + cid + ".enc");
+            });
+          } catch (e) {
+            // PPT might not exist for all courses
+          }
+          this.currentPptPages = ICS.db.getPptPages(params.subId);
+        } else {
+          this.currentPptPages = [];
+        }
         this.detailView = "summary";
       }
       this.view = view;
       if (view !== "lectures") this.exportDialogOpen = false;
     },
     _sortCoursesByStar(list) {
-      // Stable two-key sort: starred first (descending = pinned), then
-      // by the existing last_updated DESC the SQL already produced.
       var starred = this.starred;
       return list.slice().sort(function (a, b) {
         var sa = starred.has(String(a.course_id)) ? 0 : 1;
         var sb = starred.has(String(b.course_id)) ? 0 : 1;
         if (sa !== sb) return sa - sb;
-        return 0;  // preserve SQL order within each group
+        return 0;
       });
     },
     goBack() {
@@ -380,9 +245,6 @@ document.addEventListener("alpine:init", () => {
     openCourse(id) { this.navigate("lectures", { courseId: id }); },
     openLecture(id) { this.navigate("detail", { subId: id }); },
 
-    /* Prev/next within the current course's lecture list.  Lectures are
-       ordered ascending by sub_id (matches the lectures view), so "prev"
-       is the lecture at index-1 and "next" is at index+1. */
     _currentLectureIndex() {
       if (!this.currentLecture || !this.lectures) return -1;
       return this.lectures.findIndex(
@@ -395,149 +257,49 @@ document.addEventListener("alpine:init", () => {
     },
     nextLecture() {
       var i = this._currentLectureIndex();
-      return (i >= 0 && i + 1 < this.lectures.length)
-        ? this.lectures[i + 1] : null;
+      return (i >= 0 && i < this.lectures.length - 1) ? this.lectures[i + 1] : null;
     },
-    gotoPrevLecture() {
-      var lec = this.prevLecture();
-      if (lec) { this._go("detail", { subId: lec.sub_id }); this._scrollToTop(); }
+    goPrevLecture() { var l = this.prevLecture(); if (l) this._go("detail", { subId: l.sub_id }); },
+    goNextLecture() { var l = this.nextLecture(); if (l) this._go("detail", { subId: l.sub_id }); },
+
+    cycleDetailView() {
+      var idx = _DETAIL_VIEW_CYCLE.indexOf(this.detailView);
+      this.detailView = _DETAIL_VIEW_CYCLE[(idx + 1) % _DETAIL_VIEW_CYCLE.length];
     },
-    gotoNextLecture() {
-      var lec = this.nextLecture();
-      if (lec) { this._go("detail", { subId: lec.sub_id }); this._scrollToTop(); }
-    },
-    _scrollToTop() {
-      var self = this;
-      this.$nextTick(function () {
-        window.scrollTo(0, 0);
-        var el = document.querySelector("main");
-        if (el) el.scrollTop = 0;
-      });
+    detailViewNext() {
+      var idx = _DETAIL_VIEW_CYCLE.indexOf(this.detailView);
+      return _DETAIL_VIEW_LABEL[_DETAIL_VIEW_CYCLE[(idx + 1) % _DETAIL_VIEW_CYCLE.length]];
     },
 
-    /* Star/pin a course.  Per-browser localStorage state; no roundtrip
-       to GitHub.  Re-sorts the courses list immediately so the user
-       sees the pin take effect without navigating away. */
-    isStarred(courseId) {
-      return this.starred.has(String(courseId));
-    },
     toggleStar(courseId) {
       var cid = String(courseId);
       if (this.starred.has(cid)) this.starred.delete(cid);
       else this.starred.add(cid);
       _saveStarred(this.starred);
-      // Reactive refresh — re-sort in place.
       this.courses = this._sortCoursesByStar(this.courses);
     },
+    isStarred(courseId) { return this.starred.has(String(courseId)); },
 
-    /* Three-state detail viewer.  The button shown to the user always
-       advertises the *next* state so the label reads as an action. */
-    cycleDetailView() {
-      var idx = _DETAIL_VIEW_CYCLE.indexOf(this.detailView);
-      if (idx === -1) idx = 0;
-      this.detailView = _DETAIL_VIEW_CYCLE[(idx + 1) % _DETAIL_VIEW_CYCLE.length];
-    },
-    nextDetailViewLabel() {
-      var idx = _DETAIL_VIEW_CYCLE.indexOf(this.detailView);
-      if (idx === -1) idx = 0;
-      var next = _DETAIL_VIEW_CYCLE[(idx + 1) % _DETAIL_VIEW_CYCLE.length];
-      return "切换到" + _DETAIL_VIEW_LABEL[next];
-    },
-    formatPptTimestamp(sec) { return _formatTimestamp(sec); },
-
-    getExportableLectures() {
-      return (this.lectures || []).filter((lec) => lec.summary && lec.summary.trim());
-    },
-    openExportDialog() {
-      const list = this.getExportableLectures();
-      if (!list.length) { this._toast("No summarized lectures to export", "error"); return; }
-      this.exportSelection = {};
-      list.forEach((lec) => { this.exportSelection[lec.sub_id] = true; });
-      this.exportDialogOpen = true;
-    },
-    closeExportDialog() {
-      if (this.exportingPdf) return;
-      this.exportDialogOpen = false;
-    },
-    isLectureSelected(subId) { return !!this.exportSelection[subId]; },
-    toggleLectureSelection(subId, checked) { this.exportSelection[subId] = !!checked; },
-    setExportAll(checked) {
-      this.getExportableLectures().forEach((lec) => { this.exportSelection[lec.sub_id] = !!checked; });
-    },
-    isExportAllSelected() {
-      const list = this.getExportableLectures();
-      return list.length > 0 && list.every((lec) => this.exportSelection[lec.sub_id]);
-    },
-    selectedExportCount() {
-      return this.getExportableLectures().filter((lec) => this.exportSelection[lec.sub_id]).length;
-    },
-    async exportSelectedToPdf() {
-      // Triggers .github/workflows/export.yml via workflow_dispatch.  The
-      // workflow runs scripts/export_course.py (WeasyPrint) and emails the
-      // PDF to RECEIVER_EMAIL — same output and same code path as a manual
-      // run from the Actions UI.  We dropped the in-browser html2pdf.js
-      // approach because the screenshot-based pipeline produced blank PDFs
-      // unreliably; routing through Actions reuses the working tech stack.
-      if (this.exportingPdf) return;
-      const selected = this.getExportableLectures().filter(
-        (lec) => this.exportSelection[lec.sub_id]
-      );
-      if (!selected.length) {
-        this._toast("Please select at least one lecture", "error");
-        return;
-      }
-      const creds = _loadCreds();
-      if (!creds?.token) {
-        this._toast("Not authenticated", "error");
-        return;
-      }
-      this.exportingPdf = true;
-      try {
-        const subIds = selected.map((lec) => String(lec.sub_id)).join(",");
-        await ICS.github.triggerExportWorkflow(
-          this.repoOwner, this.repoName, "main", creds.token,
-          this.currentCourse.course_id, "PDF", subIds
-        );
-        this.exportDialogOpen = false;
-        this._toast(
-          "已触发后台导出，PDF 将在 1-3 分钟内发送到 RECEIVER_EMAIL",
-          "success"
-        );
-      } catch (e) {
-        this._toast(e?.message || "Export failed", "error");
-      } finally {
-        this.exportingPdf = false;
-      }
-    },
-
-    async exportSelectedToClipboard() {
-      // Client-side markdown export: concatenate transcript + summary
-      // for selected lectures and copy to clipboard.  No server needed.
-      var selected = this.getExportableLectures().filter(
-        function (lec) { return this.exportSelection[lec.sub_id]; }, this
-      );
-      if (!selected.length) {
-        this._toast("请至少选择一节课程", "error");
-        return;
-      }
-      var lines = [
-        "# " + (this.currentCourse?.title || "课程摘要"),
-        "",
-      ];
+    // Export markdown to clipboard
+    async exportMarkdown() {
+      var selected = this.lectures.filter((l) => this.exportSelection[l.sub_id]);
+      if (!selected.length) { this._toast("请先选择课次", "error"); return; }
+      var lines = [];
       for (var i = 0; i < selected.length; i++) {
-        var lec = selected[i];
-        lines.push("## " + (lec.sub_title || "Untitled") + "（" + (lec.date || "") + "）");
-        lines.push("");
-        if (lec.summary) {
-          lines.push("### 摘要");
-          lines.push("");
-          lines.push(lec.summary);
-          lines.push("");
+        var l = selected[i];
+        // Load content if needed
+        if (!ICS.db.isLectureLoaded(l.sub_id)) {
+          try {
+            await ICS.db.loadLectureContent(l.sub_id, async function(subId) {
+              return await _v3Decrypt("lectures/" + subId + ".enc");
+            });
+          } catch (e) { continue; }
         }
-        if (lec.transcript) {
-          lines.push("### 转录文本");
+        var full = ICS.db.getLecture(l.sub_id);
+        lines.push("## " + (l.sub_title || l.sub_id));
+        if (full && full.summary) {
           lines.push("");
-          lines.push(lec.transcript);
+          lines.push(full.summary);
           lines.push("");
         }
         lines.push("---");
@@ -545,20 +307,29 @@ document.addEventListener("alpine:init", () => {
       }
       try {
         await navigator.clipboard.writeText(lines.join("\n"));
-        this._toast(
-          "已复制 " + selected.length + " 节课的 Markdown 到剪贴板",
-          "success"
-        );
+        this._toast("已复制 " + selected.length + " 节课的 Markdown 到剪贴板", "success");
       } catch (e) {
         this._toast("复制失败：" + (e?.message || "unknown"), "error");
       }
     },
 
     _searchTimeout: null,
-    doSearch() {
+    async doSearch() {
       clearTimeout(this._searchTimeout);
-      this._searchTimeout = setTimeout(() => {
-        this.searchResults = this.searchQuery.trim() ? ICS.db.searchSummaries(this.searchQuery) : [];
+      var self = this;
+      this._searchTimeout = setTimeout(async function() {
+        if (!self.searchQuery.trim()) { self.searchResults = []; return; }
+        // Load search index on first search
+        if (!self._searchIndexLoaded) {
+          try {
+            var data = await _v3Decrypt("search-index.enc");
+            ICS.db.loadSearchIndex(data);
+            self._searchIndexLoaded = true;
+          } catch (e) {
+            console.warn("Failed to load search index:", e);
+          }
+        }
+        self.searchResults = ICS.db.searchSummaries(self.searchQuery);
       }, 300);
     },
 
@@ -570,38 +341,23 @@ document.addEventListener("alpine:init", () => {
     async testAndSave() {
       this.setupTesting = true; this.setupError = "";
       try {
-        var manifest = await ICS.github.fetchShardManifest(
-          this.repoOwner, this.repoName, this.dataBranch, this.setup.token,
-        );
-        if (manifest.format === "sharded") {
-          // Probe the index decryption to validate creds before we save.
-          var pw = await ICS.crypto.buildPasswordV2(this.setup);
-          var indexEnc = await ICS.github.fetchBlobBytes(
-            this.repoOwner, this.repoName, manifest.index.sha, this.setup.token,
-          );
-          var indexPt = await ICS.crypto.decrypt(
-            indexEnc, pw, ICS.crypto.NEW_ITERATIONS,
-          );
-          if (!ICS.crypto.isJsonObj(indexPt)) {
-            throw new Error("凭据验证失败：索引解密结果不像 JSON。");
-          }
-        } else {
-          var encBytes = await ICS.github.fetchBlobBytes(
-            this.repoOwner, this.repoName, manifest.legacy.sha, this.setup.token,
-          );
-          var legacyValidator = manifest.legacy.compressed
-            ? ICS.crypto.isGzip
-            : ICS.crypto.isSqlite;
-          await ICS.crypto.decryptWithFallback(
-            encBytes, this.setup, legacyValidator,
-          );
-        }
+        // Validate credentials by trying to decrypt index.enc
+        var metaRes = await fetch(_DATA_BASE + "meta.json");
+        if (!metaRes.ok) throw new Error("无法加载 meta.json");
+        var meta = await metaRes.json();
+        var pw = await ICS.crypto.buildPasswordV3(this.setup);
+        var mk = await ICS.crypto.deriveV3MasterKey(pw, meta.pbkdf2_salt, meta.iterations);
+        var indexEnc = await _v3Fetch("index.enc");
+        var indexPt = await ICS.crypto.hkdfDecrypt(indexEnc, mk);
+        // If decryption succeeds without throwing, creds are valid
         _saveCreds({ ...this.setup });
         _saveSettings({ owner: this.repoOwner, repo: this.repoName, branch: this.dataBranch });
-        this.commitSha = manifest.commitSha;
         await this._loadDB({ ...this.setup });
-      } catch (e) { this.setupError = e.message; }
-      finally { this.setupTesting = false; }
+      } catch (e) {
+        this.setupError = "凭据验证失败: " + (e.message || "解密失败");
+      } finally {
+        this.setupTesting = false;
+      }
     },
 
     openSettings() {
@@ -620,24 +376,29 @@ document.addEventListener("alpine:init", () => {
       if (!confirm("Clear all saved credentials?")) return;
       localStorage.removeItem(_LS + "creds");
       localStorage.removeItem(_LS + "settings");
-      // Close the cached connection before deleting — Chrome/Firefox block
-      // deleteDatabase indefinitely while any handle is still open.
-      if (_idbPromise) {
-        _idbPromise.then(function(db) { try { db.close(); } catch (e) {} });
-        _idbPromise = null;
-      }
-      indexedDB.deleteDatabase(_idbName);
+      _masterKey = null;
       this.view = "setup";
       this.setup = { token: "", stuid: "", uispsw: "" };
     },
 
-    // ── Subscriptions editor (three-column) ──────────────────────────
-    openSubscriptions() {
+    // ── Subscriptions editor ──────────────────────────────────────────
+    async openSubscriptions() {
       try {
         this._go("subscriptions");
       } catch (e) {
         console.error("_go failed:", e);
         return;
+      }
+
+      // Load catalog on demand
+      if (!this._catalogLoaded) {
+        try {
+          var catalogData = await _v3Decrypt("catalog.enc");
+          ICS.db.loadCatalog(catalogData);
+          this._catalogLoaded = true;
+        } catch (e) {
+          console.warn("Failed to load catalog:", e);
+        }
       }
 
       this.allCoursesTerms = ICS.db.getAllCoursesTerms();
@@ -659,26 +420,16 @@ document.addEventListener("alpine:init", () => {
       this._subsDeptCache = [];
       this.subsError = "";
 
-      // Load subscription (localStorage → meta table fallback)
       this.subscribedIds = [];
       try {
-        var cached = JSON.parse(
-          localStorage.getItem(_LS + "lastSubscribed") || "null"
-        );
+        var cached = JSON.parse(localStorage.getItem(_LS + "lastSubscribed") || "null");
         if (Array.isArray(cached)) this.subscribedIds = cached.map(String);
       } catch {}
       if (!this.subscribedIds.length) {
-        try { var metaRaw = ICS.db.getMeta("course_ids"); } catch (e) { metaRaw = null; }
+        var metaRaw = ICS.db.getMeta("course_ids");
         if (metaRaw) {
-          this.subscribedIds = metaRaw.split(",")
-            .map(function (s) { return s.trim(); })
-            .filter(Boolean);
-          try {
-            localStorage.setItem(
-              _LS + "lastSubscribed",
-              JSON.stringify(this.subscribedIds),
-            );
-          } catch {}
+          this.subscribedIds = metaRaw.split(",").map(function(s) { return s.trim(); }).filter(Boolean);
+          try { localStorage.setItem(_LS + "lastSubscribed", JSON.stringify(this.subscribedIds)); } catch {}
         }
       }
       this._refreshSubscribedCache();
@@ -686,7 +437,6 @@ document.addEventListener("alpine:init", () => {
       this._refreshDeptCache();
       this.rebuildSubsFiltered();
     },
-    // ── Cache refreshers (called explicitly when underlying IDs change) ─
     _refreshSubscribedCache() {
       this._subsSubscribedCache = ICS.db.getCoursesByIds(this.subscribedIds);
     },
@@ -694,18 +444,12 @@ document.addEventListener("alpine:init", () => {
       this._subsSingleRunCache = ICS.db.getCoursesByIds(this.singleRunIds);
     },
     _refreshDeptCache() {
-      this._subsDeptCache = ICS.db.getAllCoursesDepts(
-        this.subsTerms, this.deptSearchQuery,
-      );
+      this._subsDeptCache = ICS.db.getAllCoursesDepts(this.subsTerms, this.deptSearchQuery);
     },
-    // ── Term badge color (cyclic palette for the search results) ─────
     _TERM_COLORS: [
-      "bg-blue-100 text-blue-700",
-      "bg-emerald-100 text-emerald-700",
-      "bg-purple-100 text-purple-700",
-      "bg-amber-100 text-amber-700",
-      "bg-rose-100 text-rose-700",
-      "bg-cyan-100 text-cyan-700",
+      "bg-blue-100 text-blue-700", "bg-emerald-100 text-emerald-700",
+      "bg-purple-100 text-purple-700", "bg-amber-100 text-amber-700",
+      "bg-rose-100 text-rose-700", "bg-cyan-100 text-cyan-700",
       "bg-orange-100 text-orange-700",
     ],
     termBadgeClass(term) {
@@ -713,10 +457,8 @@ document.addEventListener("alpine:init", () => {
       for (var i = 0; i < term.length; i++) idx = (idx * 31 + term.charCodeAt(i)) | 0;
       return this._TERM_COLORS[Math.abs(idx) % this._TERM_COLORS.length];
     },
-    // ── Column data (plain arrays kept in sync by cache refreshers) ─
     get subscribedCourses() { return this._subsSubscribedCache; },
     get singleRunCourses() { return this._subsSingleRunCache; },
-    // ── Dropdown labels ─────────────────────────────────────────────
     get subsTermLabel() {
       if (!this.subsTerms.length) return '全部学期';
       return this.subsTerms.length + '个学期';
@@ -727,21 +469,14 @@ document.addEventListener("alpine:init", () => {
     },
     get subsDeptFiltered() { return this._subsDeptCache; },
     onDeptSearchInput() {
-      // Debounced — typing in the dept search box requeries distinct depts
-      // from sqlite filtered by term + substring.
       var self = this;
       clearTimeout(this._deptFilterTimer);
-      this._deptFilterTimer = setTimeout(function () {
-        self._refreshDeptCache();
-      }, 150);
+      this._deptFilterTimer = setTimeout(function() { self._refreshDeptCache(); }, 150);
     },
-    // ── Toggle multi-select ─────────────────────────────────────────
     toggleSubsTerm(term, checked) {
       var s = new Set(this.subsTerms);
       if (checked) s.add(term); else s.delete(term);
       this.subsTerms = Array.from(s);
-      // Term change invalidates both the dept dropdown (term-narrowed)
-      // and the middle column (different rows match).
       this._refreshDeptCache();
       this.rebuildSubsFiltered();
     },
@@ -751,140 +486,85 @@ document.addEventListener("alpine:init", () => {
       this.subsDepts = Array.from(s);
       this.rebuildSubsFiltered();
     },
-    // ── Filter middle column (debounced SQL query) ───────────────────
     rebuildSubsFiltered() {
       var self = this;
       clearTimeout(this._subsFilterTimer);
-      this._subsFilterTimer = setTimeout(function () {
+      this._subsFilterTimer = setTimeout(function() {
         var filters = {
-          terms: self.subsTerms,
-          depts: self.subsDepts,
-          title: self.subsSearchTitle,
-          teacher: self.subsSearchTeacher,
+          terms: self.subsTerms, depts: self.subsDepts,
+          title: self.subsSearchTitle, teacher: self.subsSearchTeacher,
         };
         self.subsFiltered = ICS.db.searchAllCourses(filters, self.subsLimit);
         self.subsFilteredTotal = ICS.db.countAllCourses(filters);
       }, 150);
     },
-    // ── Per-column multi-select ──────────────────────────────────────
     _toggleSel(arr, id, checked) {
       var cid = String(id);
       var s = new Set(arr.map(String));
       if (checked) s.add(cid); else s.delete(cid);
       return Array.from(s);
     },
-    toggleSelLeft(id, checked) {
-      this.subsSelLeft = this._toggleSel(this.subsSelLeft, id, checked);
-    },
-    toggleSelMiddle(id, checked) {
-      this.subsSelMiddle = this._toggleSel(this.subsSelMiddle, id, checked);
-    },
-    toggleSelRight(id, checked) {
-      this.subsSelRight = this._toggleSel(this.subsSelRight, id, checked);
-    },
-    // ── Triangle-arrow operations ────────────────────────────────────
+    toggleSelLeft(id, checked) { this.subsSelLeft = this._toggleSel(this.subsSelLeft, id, checked); },
+    toggleSelMiddle(id, checked) { this.subsSelMiddle = this._toggleSel(this.subsSelMiddle, id, checked); },
+    toggleSelRight(id, checked) { this.subsSelRight = this._toggleSel(this.subsSelRight, id, checked); },
     moveToSubscribed() {
       var target = new Set(this.subscribedIds.map(String));
-      var selected = this.subsSelMiddle;
-      for (var i = 0; i < selected.length; i++) target.add(selected[i]);
+      for (var i = 0; i < this.subsSelMiddle.length; i++) target.add(this.subsSelMiddle[i]);
       this.subscribedIds = Array.from(target);
       this.subsSelMiddle = [];
       this._refreshSubscribedCache();
     },
     moveFromSubscribed() {
       var target = new Set(this.subscribedIds.map(String));
-      var selected = this.subsSelLeft;
-      for (var i = 0; i < selected.length; i++) target.delete(selected[i]);
+      for (var i = 0; i < this.subsSelLeft.length; i++) target.delete(this.subsSelLeft[i]);
       this.subscribedIds = Array.from(target);
       this.subsSelLeft = [];
       this._refreshSubscribedCache();
     },
     moveToSingleRun() {
       var target = new Set(this.singleRunIds.map(String));
-      var selected = this.subsSelMiddle;
-      for (var i = 0; i < selected.length; i++) target.add(selected[i]);
+      for (var i = 0; i < this.subsSelMiddle.length; i++) target.add(this.subsSelMiddle[i]);
       this.singleRunIds = Array.from(target);
       this.subsSelMiddle = [];
       this._refreshSingleRunCache();
     },
     moveFromSingleRun() {
       var target = new Set(this.singleRunIds.map(String));
-      var selected = this.subsSelRight;
-      for (var i = 0; i < selected.length; i++) target.delete(selected[i]);
+      for (var i = 0; i < this.subsSelRight.length; i++) target.delete(this.subsSelRight[i]);
       this.singleRunIds = Array.from(target);
       this.subsSelRight = [];
       this._refreshSingleRunCache();
     },
-    // ── Save left column to GitHub Secret ────────────────────────────
     async saveSubscriptions() {
       if (this.subsSaving) return;
       var creds = _loadCreds();
-      if (!creds?.token) {
-        this.subsError = "未登录或 PAT 缺失。";
-        return;
-      }
-      if (!this.repoOwner || !this.repoName) {
-        this.subsError = "Repo owner/name 未设置，请到 Settings 配置。";
-        return;
-      }
-      this.subsSaving = true;
-      this.subsError = "";
+      if (!creds?.token) { this.subsError = "未登录或 PAT 缺失。"; return; }
+      if (!this.repoOwner || !this.repoName) { this.subsError = "Repo owner/name 未设置。"; return; }
+      this.subsSaving = true; this.subsError = "";
       try {
         var written = await ICS.github.setCourseIdsSecret(
           this.repoOwner, this.repoName, creds.token, this.subscribedIds,
         );
-        this._toast(
-          "已保存 " + written.split(",").filter(Boolean).length + " 门课到 COURSE_IDS secret",
-          "success",
-        );
-        try {
-          localStorage.setItem(
-            _LS + "lastSubscribed",
-            JSON.stringify(this.subscribedIds),
-          );
-        } catch {}
-      } catch (e) {
-        this.subsError = e?.message || "保存失败";
-      } finally {
-        this.subsSaving = false;
-      }
+        this._toast("已保存 " + written.split(",").filter(Boolean).length + " 门课到 COURSE_IDS secret", "success");
+        try { localStorage.setItem(_LS + "lastSubscribed", JSON.stringify(this.subscribedIds)); } catch {}
+      } catch (e) { this.subsError = e?.message || "保存失败"; }
+      finally { this.subsSaving = false; }
     },
-    // ── Single-run (right column) ────────────────────────────────────
     async runSingleRunWorkflow() {
       if (this.singleRunTriggering) return;
-      if (!this.singleRunIds.length) {
-        this._toast("单次运行列表为空", "error");
-        return;
-      }
+      if (!this.singleRunIds.length) { this._toast("单次运行列表为空", "error"); return; }
       var creds = _loadCreds();
-      if (!creds?.token) {
-        this.subsError = "未登录或 PAT 缺失。";
-        return;
-      }
-      this.singleRunTriggering = true;
-      this.subsError = "";
+      if (!creds?.token) { this.subsError = "未登录或 PAT 缺失。"; return; }
+      this.singleRunTriggering = true; this.subsError = "";
       try {
-        // Fire single_run.yml directly with course_ids as input. This
-        // keeps the persisted COURSE_IDS secret (used by daily check)
-        // untouched, and uses the dedicated single-run workflow rather
-        // than overloading the scheduled check workflow.
         await ICS.github.triggerSingleRunWorkflow(
-          this.repoOwner, this.repoName, "main", creds.token,
-          this.singleRunIds,
+          this.repoOwner, this.repoName, "main", creds.token, this.singleRunIds,
         );
-        this._toast(
-          "已触发单次运行，处理 " + this.singleRunIds.length + " 门课。请到 Actions 查看进度",
-          "success",
-        );
-        // Clear the basket
-        this.singleRunIds = [];
-        this.subsSelRight = [];
+        this._toast("已触发单次运行，处理 " + this.singleRunIds.length + " 门课。", "success");
+        this.singleRunIds = []; this.subsSelRight = [];
         this._refreshSingleRunCache();
-      } catch (e) {
-        this.subsError = e?.message || "触发失败";
-      } finally {
-        this.singleRunTriggering = false;
-      }
+      } catch (e) { this.subsError = e?.message || "触发失败"; }
+      finally { this.singleRunTriggering = false; }
     },
 
     _toast(msg, type) {
