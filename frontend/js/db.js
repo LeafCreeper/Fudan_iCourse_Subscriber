@@ -13,7 +13,6 @@ var _courses = [];
 var _lectures = [];
 var _lectureContent = {}; // sub_id -> {transcript, summary, summary_model}
 var _pptCache = {};       // course_id -> [{sub_id, page_num, text, created_sec}]
-var _searchIndex = null;  // [{sub_id, sub_title, course_id, course_title, summary_snippet, transcript_snippet}]
 var _catalog = null;      // [{course_id, term, title, teacher, dept}]
 var _meta = {};           // key -> value (from index if present)
 
@@ -112,32 +111,36 @@ function _getPptPages(subId) {
 }
 
 /* ── Search ── */
-function _loadSearchIndex(data) {
-  _searchIndex = data;
-}
-
 function _searchSummaries(query) {
-  if (!query || !query.trim() || !_searchIndex) return [];
+  if (!query || !query.trim()) return [];
   var q = query.trim().toLowerCase();
   var results = [];
-  for (var i = 0; i < _searchIndex.length && results.length < 50; i++) {
-    var entry = _searchIndex[i];
+  for (var i = 0; i < _lectures.length && results.length < 50; i++) {
+    var lec = _lectures[i];
+    var content = _lectureContent[lec.sub_id];
+    var summary = (content && content.summary) || "";
+    var transcript = (content && content.transcript) || "";
+    var subTitle = lec.sub_title || "";
     var hitField = null;
-    if (entry.summary_snippet && entry.summary_snippet.toLowerCase().indexOf(q) !== -1) {
+    if (summary && summary.toLowerCase().indexOf(q) !== -1) {
       hitField = "summary";
-    } else if (entry.sub_title && entry.sub_title.toLowerCase().indexOf(q) !== -1) {
+    } else if (subTitle.toLowerCase().indexOf(q) !== -1) {
       hitField = "sub_title";
-    } else if (entry.transcript_snippet && entry.transcript_snippet.toLowerCase().indexOf(q) !== -1) {
+    } else if (transcript && transcript.toLowerCase().indexOf(q) !== -1) {
       hitField = "transcript";
     }
     if (hitField) {
+      var course = null;
+      for (var j = 0; j < _courses.length; j++) {
+        if (_courses[j].course_id === lec.course_id) { course = _courses[j]; break; }
+      }
       results.push({
-        sub_id: entry.sub_id,
-        sub_title: entry.sub_title,
-        course_id: entry.course_id,
-        course_title: entry.course_title,
-        summary: entry.summary_snippet,
-        transcript: entry.transcript_snippet,
+        sub_id: lec.sub_id,
+        sub_title: subTitle,
+        course_id: lec.course_id,
+        course_title: course ? course.title : "",
+        summary: summary,
+        transcript: transcript,
         hit_field: hitField,
       });
     }
@@ -262,7 +265,6 @@ window.ICS.db = {
   loadLectureContent: _loadLectureContent,
   loadPptPages: _loadPptPages,
   getPptPages: _getPptPages,
-  loadSearchIndex: _loadSearchIndex,
   searchSummaries: _searchSummaries,
   loadCatalog: _loadCatalog,
   getAllCourses: _getAllCourses,

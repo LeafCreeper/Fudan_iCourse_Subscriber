@@ -185,28 +185,6 @@ def _build_index(conn: sqlite3.Connection) -> dict:
     return {"courses": courses, "lectures": lectures}
 
 
-def _build_search_index(conn: sqlite3.Connection) -> list:
-    """Build a simple search index: list of {sub_id, sub_title, course_id, snippets}."""
-    entries = []
-    for r in conn.execute(
-        "SELECT l.sub_id, l.sub_title, l.course_id, l.summary, l.transcript, "
-        "c.title AS course_title "
-        "FROM lectures l JOIN courses c ON l.course_id = c.course_id "
-        "WHERE l.summary IS NOT NULL"
-    ):
-        # Store first 200 chars of summary as searchable snippet
-        entry = {
-            "sub_id": r["sub_id"],
-            "sub_title": r["sub_title"],
-            "course_id": r["course_id"],
-            "course_title": r["course_title"],
-            "summary_snippet": (r["summary"] or "")[:200],
-            "transcript_snippet": (r["transcript"] or "")[:200],
-        }
-        entries.append(entry)
-    return entries
-
-
 def _encrypt_and_write(data: bytes, master_key: bytes, file_id: str, path: str):
     """Gzip + HKDF-encrypt and write to path."""
     compressed = gzip.compress(data, compresslevel=9)
@@ -315,14 +293,7 @@ def build(data_dir: str, output_dir: str):
         _encrypt_and_write(catalog_json, master_key, "catalog", catalog_path)
         print(f"  catalog.enc ({os.path.getsize(catalog_path)} bytes) - {len(catalog_rows)} courses")
 
-    # 6) Search index
-    search_data = _build_search_index(conn)
-    search_json = json.dumps(search_data, ensure_ascii=False).encode("utf-8")
-    search_path = os.path.join(dist_data, "search-index.enc")
-    _encrypt_and_write(search_json, master_key, "search-index", search_path)
-    print(f"  search-index.enc ({os.path.getsize(search_path)} bytes)")
-
-    # 7) Copy frontend static files
+    # 6) Copy frontend static files
     frontend_dir = os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "frontend"
     )

@@ -136,7 +136,6 @@ document.addEventListener("alpine:init", () => {
     singleRunTriggering: false,
     starred: _loadStarred(),
     _catalogLoaded: false,
-    _searchIndexLoaded: false,
 
     async init() {
       const detected = ICS.github.detectRepo();
@@ -321,18 +320,8 @@ document.addEventListener("alpine:init", () => {
     async doSearch() {
       clearTimeout(this._searchTimeout);
       var self = this;
-      this._searchTimeout = setTimeout(async function() {
+      this._searchTimeout = setTimeout(function() {
         if (!self.searchQuery.trim()) { self.searchResults = []; return; }
-        // Load search index on first search
-        if (!self._searchIndexLoaded) {
-          try {
-            var data = await _v3Decrypt("search-index.enc");
-            ICS.db.loadSearchIndex(data);
-            self._searchIndexLoaded = true;
-          } catch (e) {
-            console.warn("Failed to load search index:", e);
-          }
-        }
         self.searchResults = ICS.db.searchSummaries(self.searchQuery);
       }, 300);
     },
@@ -593,15 +582,11 @@ document.addEventListener("alpine:init", () => {
           return ICS.db.loadLectureContent(sub, function(id) { return _v3Decrypt("lectures/" + id + ".enc"); }).catch(function() {});
         }));
       }
-      // 2) Search index
-      if (!this._searchIndexLoaded) {
-        try { ICS.db.loadSearchIndex(await _v3Decrypt("search-index.enc")); this._searchIndexLoaded = true; } catch (e) {}
-      }
-      // 3) PPT (parallel)
+      // 2) PPT (parallel)
       await Promise.all(courses.map(function(c) {
         return ICS.db.loadPptPages(c.course_id, function(id) { return _v3Decrypt("ppt/" + id + ".enc"); }).catch(function() {});
       }));
-      // 4) Catalog
+      // 3) Catalog
       if (!this._catalogLoaded) {
         try { ICS.db.loadCatalog(await _v3Decrypt("catalog.enc")); this._catalogLoaded = true; } catch (e) {}
       }
