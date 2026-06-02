@@ -578,5 +578,29 @@ document.addEventListener("alpine:init", () => {
     snippet(s, n) { return ICS.render.plainSnippet(s, n); },
     highlight(text, q) { return _highlightSnippet(text, q); },
     relTime(s) { return _relativeTime(s); },
+
+    nextDetailViewLabel() {
+      var idx = _DETAIL_VIEW_CYCLE.indexOf(this.detailView);
+      return _DETAIL_VIEW_LABEL[_DETAIL_VIEW_CYCLE[(idx + 1) % _DETAIL_VIEW_CYCLE.length]];
+    },
+    getExportableLectures() {
+      return this.lectures.filter(function(l) { return l.state === 'ready'; });
+    },
+    isExportAllSelected() {
+      var exportable = this.getExportableLectures();
+      if (!exportable.length) return false;
+      var sel = this.exportSelection;
+      return exportable.every(function(l) { return sel[l.sub_id]; });
+    },
+    selectedExportCount() {
+      var sel = this.exportSelection;
+      return this.getExportableLectures().filter(function(l) { return sel[l.sub_id]; }).length;
+    },
+    setExportAll(checked) {
+      var exportable = this.getExportableLectures();
+      for (var i = 0; i < exportable.length; i++) {
+        this.exportSelection[exportable[i].sub_id] = checked;
+      }
+    },
   }));
 });
