@@ -574,21 +574,30 @@ document.addEventListener("alpine:init", () => {
 
     async _preloadInBackground() {
       var courses = ICS.db.getCourses();
+      // 1) Preload all lecture content (parallel, max 6 concurrent)
+      var allSubs = [];
       for (var i = 0; i < courses.length; i++) {
         var lecs = ICS.db.getLectures(courses[i].course_id);
         for (var j = 0; j < lecs.length; j++) {
-          if (!ICS.db.isLectureLoaded(lecs[j].sub_id)) {
-            try { await ICS.db.loadLectureContent(lecs[j].sub_id, function(id) { return _v3Decrypt("lectures/" + id + ".enc"); }); }
-            catch (e) {}
-          }
+          if (!ICS.db.isLectureLoaded(lecs[j].sub_id)) allSubs.push(lecs[j].sub_id);
         }
       }
+      var concurrency = 6;
+      for (var start = 0; start < allSubs.length; start += concurrency) {
+        var batch = allSubs.slice(start, start + concurrency);
+        await Promise.all(batch.map(function(sub) {
+          return ICS.db.loadLectureContent(sub, function(id) { return _v3Decrypt("lectures/" + id + ".enc"); }).catch(function() {});
+        }));
+      }
+      // 2) Search index
       if (!this._searchIndexLoaded) {
         try { ICS.db.loadSearchIndex(await _v3Decrypt("search-index.enc")); this._searchIndexLoaded = true; } catch (e) {}
       }
-      for (var m = 0; m < courses.length; m++) {
-        try { await ICS.db.loadPptPages(courses[m].course_id, function(id) { return _v3Decrypt("ppt/" + id + ".enc"); }); } catch (e) {}
-      }
+      // 3) PPT (parallel)
+      await Promise.all(courses.map(function(c) {
+        return ICS.db.loadPptPages(c.course_id, function(id) { return _v3Decrypt("ppt/" + id + ".enc"); }).catch(function() {});
+      }));
+      // 4) Catalog
       if (!this._catalogLoaded) {
         try { ICS.db.loadCatalog(await _v3Decrypt("catalog.enc")); this._catalogLoaded = true; } catch (e) {}
       }
