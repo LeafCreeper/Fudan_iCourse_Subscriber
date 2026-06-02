@@ -2,7 +2,7 @@ name: Deploy Frontend
 
 on:
   push:
-    branches: [main, feat/enhance-pages-deploy]
+    branches: [main]
     paths: ['frontend/**', 'scripts/build_frontend.py', 'scripts/build_crypto.py']
   # Rebuild Pages whenever iCourse Check completes (it pushes new data to data branch)
   workflow_run:
