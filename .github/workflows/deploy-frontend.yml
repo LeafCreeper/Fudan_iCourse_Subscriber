@@ -2,7 +2,7 @@ name: Deploy Frontend
 
 on:
   push:
-    branches: [main]
+    branches: [main, feat/enhance-pages-deploy]
     paths: ['frontend/**', 'scripts/build_frontend.py', 'scripts/build_crypto.py']
   # Rebuild Pages whenever iCourse Check completes (it pushes new data to data branch)
   workflow_run:
@@ -29,8 +29,6 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: main
 
       - name: Set up Python
         uses: actions/setup-python@v5
