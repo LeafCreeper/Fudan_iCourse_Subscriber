@@ -261,6 +261,8 @@ document.addEventListener("alpine:init", () => {
     },
     goPrevLecture() { var l = this.prevLecture(); if (l) this._go("detail", { subId: l.sub_id }); },
     goNextLecture() { var l = this.nextLecture(); if (l) this._go("detail", { subId: l.sub_id }); },
+    gotoPrevLecture() { this.goPrevLecture(); },
+    gotoNextLecture() { this.goNextLecture(); },
 
     cycleDetailView() {
       var idx = _DETAIL_VIEW_CYCLE.indexOf(this.detailView);
@@ -601,6 +603,39 @@ document.addEventListener("alpine:init", () => {
       for (var i = 0; i < exportable.length; i++) {
         this.exportSelection[exportable[i].sub_id] = checked;
       }
+    },
+    formatPptTimestamp(sec) { return _formatTimestamp(sec); },
+    openExportDialog() {
+      this.exportSelection = {};
+      this.exportDialogOpen = true;
+    },
+    closeExportDialog() { this.exportDialogOpen = false; },
+    isLectureSelected(subId) { return !!this.exportSelection[subId]; },
+    toggleLectureSelection(subId) {
+      this.exportSelection[subId] = !this.exportSelection[subId];
+    },
+    async exportSelectedToClipboard() { await this.exportMarkdown(); },
+    async exportSelectedToPdf() {
+      // PDF export via workflow trigger
+      var creds = _loadCreds();
+      if (!creds?.token) { this._toast("需要 PAT 来触发导出", "error"); return; }
+      var selected = this.lectures.filter((l) => this.exportSelection[l.sub_id]);
+      if (!selected.length) { this._toast("请先选择课次", "error"); return; }
+      this.exportingPdf = true;
+      try {
+        var subIds = selected.map(l => l.sub_id).join(",");
+        var courseId = this.currentCourse?.course_id || "";
+        // Trigger export workflow
+        var url = "https://api.github.com/repos/" + this.repoOwner + "/" + this.repoName + "/actions/workflows/export.yml/dispatches";
+        var res = await fetch(url, {
+          method: "POST",
+          headers: { Authorization: "token " + creds.token, Accept: "application/vnd.github+json", "Content-Type": "application/json" },
+          body: JSON.stringify({ ref: "main", inputs: { course_id: courseId, export_type: "PDF", sub_ids: subIds } }),
+        });
+        if (res.status === 204) this._toast("PDF 导出已触发，请查看邮箱", "success");
+        else throw new Error("触发失败: " + res.status);
+      } catch (e) { this._toast(e.message, "error"); }
+      finally { this.exportingPdf = false; }
     },
   }));
 });
