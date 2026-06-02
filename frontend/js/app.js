@@ -574,15 +574,17 @@ document.addEventListener("alpine:init", () => {
 
     async _preloadInBackground() {
       var courses = ICS.db.getCourses();
-      // 1) Preload all lecture content (parallel, max 6 concurrent)
+      // 1) Preload all lecture content (concurrency = max lectures in any single course)
       var allSubs = [];
+      var maxPerCourse = 0;
       for (var i = 0; i < courses.length; i++) {
         var lecs = ICS.db.getLectures(courses[i].course_id);
+        if (lecs.length > maxPerCourse) maxPerCourse = lecs.length;
         for (var j = 0; j < lecs.length; j++) {
           if (!ICS.db.isLectureLoaded(lecs[j].sub_id)) allSubs.push(lecs[j].sub_id);
         }
       }
-      var concurrency = 6;
+      var concurrency = Math.max(maxPerCourse, 1);
       for (var start = 0; start < allSubs.length; start += concurrency) {
         var batch = allSubs.slice(start, start + concurrency);
         await Promise.all(batch.map(function(sub) {
