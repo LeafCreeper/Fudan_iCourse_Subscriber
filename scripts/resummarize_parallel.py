@@ -23,6 +23,7 @@ Usage:
     python scripts/resummarize_parallel.py                      # all
     python scripts/resummarize_parallel.py --limit 100          # first 100
     python scripts/resummarize_parallel.py --llm-workers 8      # more LLM concurrency
+    python scripts/resummarize_parallel.py --all                # force every summary
 """
 
 from __future__ import annotations
@@ -146,6 +147,11 @@ def main():
     parser.add_argument("--llm-workers", type=int, default=LLM_WORKERS)
     parser.add_argument("--limit", type=int, default=0)
     parser.add_argument("--course-ids", type=str, default="")
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        help="force every existing summary through the current LLM providers",
+    )
     args = parser.parse_args()
 
     global llm_queue
@@ -165,8 +171,14 @@ def main():
     # ── Phase 1: Catalog — scan targets + register PPT pages ─────────────
     if args.course_ids:
         cids = [c.strip() for c in args.course_ids.split(",") if c.strip()]
-        targets = db.get_lectures_to_resummarize_for_courses(cids)
+        targets = db.get_lectures_to_resummarize_for_courses(
+            cids, force_all=args.all,
+        )
     else:
+        if args.all:
+            print("--all requires --course-ids to keep the rewrite scoped.")
+            scheduler.shutdown()
+            return
         targets = db.get_lectures_to_resummarize()
     if not targets:
         print("No lectures need resummarize.")

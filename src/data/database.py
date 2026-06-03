@@ -421,11 +421,12 @@ class Database:
         return [dict(row) for row in rows]
 
     def get_lectures_to_resummarize_for_courses(
-        self, course_ids: list[str],
+        self, course_ids: list[str], force_all: bool = False,
     ) -> list[dict]:
         """Return lectures that need a re-OCR + re-summarize pass.
 
-        Two cases qualify (OR-ed together), both scoped to ``course_ids``:
+        In normal mode, two cases qualify (OR-ed together), both scoped to
+        ``course_ids``:
 
           v0 — old summary written before the PPT-aware prompt existed
                (``summary_format_version = 0``).  These never had PPT in
@@ -438,16 +439,18 @@ class Database:
         Once a lecture has *any* ppt_pages row (even one stamped ``failed``
         or ``invalid``), it is no longer eligible — we don't keep retrying
         a genuinely PPT-less lecture every run.
+
+        When ``force_all`` is true, every lecture with an existing summary in
+        the target courses qualifies.  This is intended for one-shot model
+        migration runs, such as redoing ModelScope summaries with a stronger
+        OpenAI-compatible endpoint.
         """
         if not course_ids:
             return []
         placeholders = ",".join("?" * len(course_ids))
-        rows = self.conn.execute(
-            f"""SELECT l.*, c.title AS course_title, c.teacher
-               FROM lectures l
-               JOIN courses c ON l.course_id = c.course_id
-               WHERE l.summary IS NOT NULL
-                 AND l.course_id IN ({placeholders})
+        extra_predicate = ""
+        if not force_all:
+            extra_predicate = """
                  AND (
                    COALESCE(l.summary_format_version, 0) = 0
                    OR (
@@ -457,7 +460,14 @@ class Database:
                        WHERE p.sub_id = l.sub_id
                      )
                    )
-                 )""",
+                 )"""
+        rows = self.conn.execute(
+            f"""SELECT l.*, c.title AS course_title, c.teacher
+               FROM lectures l
+               JOIN courses c ON l.course_id = c.course_id
+               WHERE l.summary IS NOT NULL
+                 AND l.course_id IN ({placeholders})
+                 {extra_predicate}""",
             list(course_ids),
         ).fetchall()
         return [dict(row) for row in rows]

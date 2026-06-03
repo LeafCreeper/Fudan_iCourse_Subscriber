@@ -26,6 +26,15 @@ USER_AGENT = (
 # 现的那条；这避免 Summarizer 内部按 name 索引 client 字典时被后写覆盖。
 MODEL_PROVIDERS: list[dict] = [
     {
+        "name": "custom_openai",
+        "api_key_env": "CUSTOM_OPENAI_API_KEY",
+        "base_url_env": "CUSTOM_OPENAI_BASE_URL",
+        "default_base_url": "",
+        "models": [
+            (os.environ.get("CUSTOM_OPENAI_MODEL") or "gpt-5.5").strip()
+        ],
+    },
+    {
         "name": "modelscope",
         "api_key_env": "DASHSCOPE_API_KEY",
         "base_url_env": "DASHSCOPE_BASE_URL",
@@ -91,9 +100,12 @@ def resolve_model_providers() -> list[dict]:
         )
         if not base_url:
             continue
+        models = [m for m in p["models"] if m]
+        if not models:
+            continue
         if p["name"] in by_name:
             existing = by_name[p["name"]]
-            for m in p["models"]:
+            for m in models:
                 if m not in existing["models"]:
                     existing["models"].append(m)
             continue
@@ -101,7 +113,7 @@ def resolve_model_providers() -> list[dict]:
             "name": p["name"],
             "api_key": api_key,
             "base_url": base_url,
-            "models": list(p["models"]),
+            "models": models,
         }
         resolved.append(entry)
         by_name[p["name"]] = entry
@@ -166,11 +178,25 @@ VIDEO_DOWNLOAD_CONCURRENCY = int(
 
 # Resummarize phase opt-in.  Re-running OCR + LLM on every old lecture is
 # expensive (each lecture ~ a minute of LLM + 30 OCR calls); we don't want
-# every nightly run paying that cost.  Set RESUMMARIZE_OLD=1 to enable for
-# a one-shot manual workflow run.  Default off.
-RESUMMARIZE_OLD_ENABLED = os.environ.get("RESUMMARIZE_OLD", "").strip() in (
+# every nightly run paying that cost.  Set RESUMMARIZE_OLD=1 to upgrade only
+# stale/missing-PPT summaries, or RESUMMARIZE_ALL=1 to force every existing
+# summary through the current model provider stack.  Default off.
+RESUMMARIZE_ALL_ENABLED = os.environ.get("RESUMMARIZE_ALL", "").strip() in (
     "1", "true", "yes", "on",
 )
+RESUMMARIZE_OLD_ENABLED = os.environ.get("RESUMMARIZE_OLD", "").strip() in (
+    "1", "true", "yes", "on",
+) or RESUMMARIZE_ALL_ENABLED
+
+# GitHub-hosted runners have a 6-hour job ceiling.  When set, the main loop
+# stops taking new lecture/resummarize work after this many minutes so the
+# workflow still has time to upload the database and exit successfully.
+try:
+    RUN_SOFT_TIMEOUT_MINUTES = int(
+        os.environ.get("RUN_SOFT_TIMEOUT_MINUTES", "0") or "0"
+    )
+except ValueError:
+    RUN_SOFT_TIMEOUT_MINUTES = 0
 
 # 监控的课程 ID 列表
 COURSE_IDS = [

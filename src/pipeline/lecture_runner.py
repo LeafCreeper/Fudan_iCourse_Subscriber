@@ -32,7 +32,8 @@ from __future__ import annotations
 
 import time
 import traceback
-from typing import TYPE_CHECKING, Optional
+from typing import Callable, Optional
+from typing import TYPE_CHECKING
 
 from src.ai import bucketer
 from src.pipeline.ppt_pipeline import PPTPipeline
@@ -281,7 +282,9 @@ def resummarize_old_lectures(client: "ICourseClient", db: "Database",
                              ppt_pipeline: PPTPipeline,
                              reporter: "Reporter",
                              email_items: list, course_ids: list[str],
-                             check_session_fn=None):
+                             check_session_fn=None,
+                             should_stop: Callable[[], bool] | None = None,
+                             force_all: bool = False):
     """Upgrade pre-v2 summaries to PPT-aware v2 format (flat-mode prompt).
 
     Old lectures kept their original transcript but never had PPT OCR.  We
@@ -291,15 +294,25 @@ def resummarize_old_lectures(client: "ICourseClient", db: "Database",
     suffix and a 更新 badge.
 
     Scoped to ``course_ids`` so we don't re-OCR courses the user isn't
-    monitoring this run.
+    monitoring this run.  ``force_all`` widens the target set to every
+    existing summary in those courses for one-shot model migration runs.
     """
-    targets = db.get_lectures_to_resummarize_for_courses(course_ids)
+    targets = db.get_lectures_to_resummarize_for_courses(
+        course_ids, force_all=force_all,
+    )
     if not targets:
         return
     reporter.resummarize_header(len(targets))
 
     seen_sub_ids = {item["sub_id"] for item in email_items}
     for idx, row in enumerate(targets, 1):
+        if should_stop and should_stop():
+            reporter.info(
+                "    [Resummarize] Soft time limit reached; stopping so "
+                "progress can be saved."
+            )
+            return
+
         sub_id = str(row["sub_id"])
         course_id = row["course_id"]
         sub_title = row.get("sub_title", sub_id)

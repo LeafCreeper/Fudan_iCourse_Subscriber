@@ -6,6 +6,12 @@ on:
     # 设计这个奇怪的时间是为了避免整点时的github队列峰值，避免排队过久。
     - cron: "36 11 * * *"
   workflow_dispatch:
+    inputs:
+      resummarize_all:
+        description: "Re-summarize every existing lecture with the current LLM"
+        required: false
+        default: "false"
+        type: boolean
 
 permissions:
   contents: write
@@ -169,9 +175,17 @@ jobs:
           COURSE_IDS: ${{ secrets.COURSE_IDS }}
           CRAWL_TERM: ${{ secrets.CRAWL_TERM }}
           RESUMMARIZE_OLD: "1"
+          RESUMMARIZE_ALL: ${{ github.event_name == 'workflow_dispatch' && inputs.resummarize_all && '1' || '' }}
+          RUN_SOFT_TIMEOUT_MINUTES: "330"
+          CUSTOM_OPENAI_API_KEY: ${{ secrets.CUSTOM_OPENAI_API_KEY }}
+          CUSTOM_OPENAI_BASE_URL: ${{ secrets.CUSTOM_OPENAI_BASE_URL }}
+          CUSTOM_OPENAI_MODEL: ${{ secrets.CUSTOM_OPENAI_MODEL }}
           DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
+          DASHSCOPE_BASE_URL: ${{ secrets.DASHSCOPE_BASE_URL }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          DEEPSEEK_BASE_URL: ${{ secrets.DEEPSEEK_BASE_URL }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_BASE_URL: ${{ secrets.GEMINI_BASE_URL }}
           SMTP_EMAIL: ${{ secrets.SMTP_EMAIL }}
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           RECEIVER_EMAIL: ${{ secrets.RECEIVER_EMAIL }}

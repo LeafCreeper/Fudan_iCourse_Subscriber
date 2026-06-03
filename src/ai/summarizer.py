@@ -1,4 +1,4 @@
-"""LLM-based course lecture summarization via ModelScope API."""
+"""LLM-based course lecture summarization via OpenAI-compatible APIs."""
 
 import time
 

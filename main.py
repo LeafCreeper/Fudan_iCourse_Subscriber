@@ -17,6 +17,7 @@ Anything more interesting belongs in one of ``src/*`` modules.
 import datetime
 import time
 import traceback
+from typing import Callable
 
 from src.runtime import config
 from src.data.database import Database
@@ -140,7 +141,8 @@ def _drive_lectures(client: ICourseClient, db: Database,
                     scheduler: Scheduler, transcriber: Transcriber,
                     summarizer: Summarizer, reporter: Reporter,
                     all_lectures: list[tuple[str, str, dict]],
-                    email_items: list) -> None:
+                    email_items: list,
+                    should_stop: Callable[[], bool] | None = None) -> None:
     """Phase 2: run each lecture through LectureRunner.
 
     Pre-schedules the first lecture's prefetch (audio + images) before
@@ -158,6 +160,13 @@ def _drive_lectures(client: ICourseClient, db: Database,
     )
 
     for i, (course_id, course_title, lecture) in enumerate(all_lectures):
+        if should_stop and should_stop():
+            reporter.info(
+                "[Runtime] Soft time limit reached; stopping before the "
+                "next lecture so progress can be saved."
+            )
+            return
+
         sub_id = str(lecture["sub_id"])
         next_info: tuple[str, str] | None = None
         if i + 1 < len(all_lectures):
@@ -271,6 +280,14 @@ def run():
     """Single execution of the full pipeline."""
     reporter = Reporter()
     reporter.run_header()
+    run_started_at = time.time()
+
+    def should_stop_for_time() -> bool:
+        if config.RUN_SOFT_TIMEOUT_MINUTES <= 0:
+            return False
+        return (time.time() - run_started_at) >= (
+            config.RUN_SOFT_TIMEOUT_MINUTES * 60
+        )
 
     if not config.COURSE_IDS and not config.CRAWL_TERM:
         reporter.info(
@@ -311,14 +328,18 @@ def run():
         all_lectures = _enumerate_lectures(client, db, reporter)
         _drive_lectures(
             client, db, scheduler, transcriber, summarizer, reporter,
-            all_lectures, email_items,
+            all_lectures, email_items, should_stop=should_stop_for_time,
         )
 
         # Resummarize old (pre-v2) lectures, scoped to the courses we're
         # actively monitoring this run.  Opt-in via RESUMMARIZE_OLD=1
         # because re-OCR + re-LLM on every stale lecture turns a 5-min
         # nightly run into a 2-hour one; flip on for one-shot manual runs.
-        if config.RESUMMARIZE_OLD_ENABLED:
+        if config.RESUMMARIZE_OLD_ENABLED and should_stop_for_time():
+            reporter.info(
+                "\n[Resummarize] Skipping — soft time limit reached."
+            )
+        elif config.RESUMMARIZE_OLD_ENABLED:
             try:
                 _check_session(client)
                 ppt_pipeline = PPTPipeline(db, scheduler, reporter)
@@ -326,6 +347,8 @@ def run():
                     client, db, summarizer, ppt_pipeline, reporter,
                     email_items, config.COURSE_IDS,
                     check_session_fn=_check_session,
+                    should_stop=should_stop_for_time,
+                    force_all=config.RESUMMARIZE_ALL_ENABLED,
                 )
             except Exception:
                 reporter.info("[Resummarize] phase errored:")

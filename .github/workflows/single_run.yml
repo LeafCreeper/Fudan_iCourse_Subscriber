@@ -7,6 +7,11 @@ on:
         description: "Comma-separated course IDs to process (e.g. 30004,30005)"
         required: true
         type: string
+      resummarize_all:
+        description: "Re-summarize every existing lecture in these courses"
+        required: false
+        default: "false"
+        type: boolean
 
 permissions:
   contents: write
@@ -157,8 +162,18 @@ jobs:
           StuId: ${{ secrets.STUID }}
           UISPsw: ${{ secrets.UISPSW }}
           COURSE_IDS: ${{ inputs.course_ids }}
+          RESUMMARIZE_OLD: ${{ inputs.resummarize_all && '1' || '' }}
+          RESUMMARIZE_ALL: ${{ inputs.resummarize_all && '1' || '' }}
+          RUN_SOFT_TIMEOUT_MINUTES: "330"
+          CUSTOM_OPENAI_API_KEY: ${{ secrets.CUSTOM_OPENAI_API_KEY }}
+          CUSTOM_OPENAI_BASE_URL: ${{ secrets.CUSTOM_OPENAI_BASE_URL }}
+          CUSTOM_OPENAI_MODEL: ${{ secrets.CUSTOM_OPENAI_MODEL }}
           DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
+          DASHSCOPE_BASE_URL: ${{ secrets.DASHSCOPE_BASE_URL }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          DEEPSEEK_BASE_URL: ${{ secrets.DEEPSEEK_BASE_URL }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_BASE_URL: ${{ secrets.GEMINI_BASE_URL }}
           SMTP_EMAIL: ${{ secrets.SMTP_EMAIL }}
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           RECEIVER_EMAIL: ${{ secrets.RECEIVER_EMAIL }}
