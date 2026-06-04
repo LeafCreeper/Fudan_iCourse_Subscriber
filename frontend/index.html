@@ -803,6 +803,7 @@
 
     <div class="px-4 py-2 bg-blue-50 border-t border-blue-100 text-xs text-blue-800 leading-relaxed space-y-1">
       <p>[MD] <strong>复制 Markdown</strong>：合并转录+摘要到剪贴板，纯浏览器端操作，无需网络。</p>
+      <p>[MD] <strong>下载 Markdown</strong>：按课次时间顺序拼接并直接下载 .md 文件，纯浏览器端操作，无需网络。</p>
       <p>[PDF] <strong>触发后台导出</strong>：通过 GitHub Actions 生成 PDF，发送到 RECEIVER_EMAIL。预计 1-3 分钟。</p>
     </div>
 
@@ -815,6 +816,10 @@
       <button @click="exportSelectedToClipboard()"
               class="px-4 py-2 text-sm rounded-lg border border-green-300 text-green-700 hover:bg-green-50">
         复制 Markdown
+      </button>
+      <button @click="exportSelectedToMarkdownFile()"
+              class="px-4 py-2 text-sm rounded-lg border border-emerald-300 text-emerald-700 hover:bg-emerald-50">
+        下载 Markdown
       </button>
       <button @click="exportSelectedToPdf()"
               :disabled="exportingPdf"

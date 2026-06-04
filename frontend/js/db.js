@@ -132,7 +132,9 @@ function _getLectures(courseId) {
   const rows = _queryAll(`
     SELECT sub_id, sub_title, date, summary, processed_at,
            error_stage, error_msg, summary_model, transcript
-    FROM lectures WHERE course_id = ? ORDER BY sub_id ASC
+    FROM lectures
+    WHERE course_id = ?
+    ORDER BY CAST(sub_id AS INTEGER) ASC, sub_id ASC
   `, [courseId]);
   return rows.map((r) => {
     r.state = _deriveState(r);

@@ -475,6 +475,45 @@ document.addEventListener("alpine:init", () => {
     selectedExportCount() {
       return this.getExportableLectures().filter((lec) => this.exportSelection[lec.sub_id]).length;
     },
+    _getSelectedExportLectures() {
+      return this.getExportableLectures().filter(
+        function (lec) { return this.exportSelection[lec.sub_id]; }, this
+      );
+    },
+    _buildSelectedMarkdown(selected) {
+      var lines = [
+        "# " + (this.currentCourse?.title || "课程摘要"),
+        "",
+      ];
+      for (var i = 0; i < selected.length; i++) {
+        var lec = selected[i];
+        lines.push("## " + (lec.sub_title || "Untitled") + "（" + (lec.date || "") + "）");
+        lines.push("");
+        if (lec.summary) {
+          lines.push("### 摘要");
+          lines.push("");
+          lines.push(lec.summary);
+          lines.push("");
+        }
+        if (lec.transcript) {
+          lines.push("### 转录文本");
+          lines.push("");
+          lines.push(lec.transcript);
+          lines.push("");
+        }
+        lines.push("---");
+        lines.push("");
+      }
+      return lines.join("\n");
+    },
+    _makeMarkdownFilename() {
+      var title = String(this.currentCourse?.title || "课程摘要")
+        .replace(/[\\/:*?"<>|]/g, "_")
+        .replace(/\s+/g, "_")
+        .replace(/^_+|_+$/g, "");
+      if (!title) title = "课程摘要";
+      return title + ".md";
+    },
     async exportSelectedToPdf() {
       // Triggers .github/workflows/export.yml via workflow_dispatch.  The
       // workflow runs scripts/export_course.py (WeasyPrint) and emails the
@@ -517,38 +556,14 @@ document.addEventListener("alpine:init", () => {
     async exportSelectedToClipboard() {
       // Client-side markdown export: concatenate transcript + summary
       // for selected lectures and copy to clipboard.  No server needed.
-      var selected = this.getExportableLectures().filter(
-        function (lec) { return this.exportSelection[lec.sub_id]; }, this
-      );
+      var selected = this._getSelectedExportLectures();
       if (!selected.length) {
         this._toast("请至少选择一节课程", "error");
         return;
       }
-      var lines = [
-        "# " + (this.currentCourse?.title || "课程摘要"),
-        "",
-      ];
-      for (var i = 0; i < selected.length; i++) {
-        var lec = selected[i];
-        lines.push("## " + (lec.sub_title || "Untitled") + "（" + (lec.date || "") + "）");
-        lines.push("");
-        if (lec.summary) {
-          lines.push("### 摘要");
-          lines.push("");
-          lines.push(lec.summary);
-          lines.push("");
-        }
-        if (lec.transcript) {
-          lines.push("### 转录文本");
-          lines.push("");
-          lines.push(lec.transcript);
-          lines.push("");
-        }
-        lines.push("---");
-        lines.push("");
-      }
+      var markdown = this._buildSelectedMarkdown(selected);
       try {
-        await navigator.clipboard.writeText(lines.join("\n"));
+        await navigator.clipboard.writeText(markdown);
         this._toast(
           "已复制 " + selected.length + " 节课的 Markdown 到剪贴板",
           "success"
@@ -556,6 +571,24 @@ document.addEventListener("alpine:init", () => {
       } catch (e) {
         this._toast("复制失败：" + (e?.message || "unknown"), "error");
       }
+    },
+    exportSelectedToMarkdownFile() {
+      var selected = this._getSelectedExportLectures();
+      if (!selected.length) {
+        this._toast("请至少选择一节课程", "error");
+        return;
+      }
+      var markdown = this._buildSelectedMarkdown(selected);
+      var blob = new Blob([markdown], { type: "text/markdown;charset=utf-8" });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement("a");
+      a.href = url;
+      a.download = this._makeMarkdownFilename();
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      this._toast("已下载 " + selected.length + " 节课的 Markdown", "success");
     },
 
     _searchTimeout: null,
