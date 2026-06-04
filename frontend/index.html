@@ -402,13 +402,36 @@
 
   <!-- ─── SEARCH ─── -->
   <div x-show="view === 'search'" class="view-enter max-w-2xl mx-auto p-4">
-    <div class="relative mb-4">
-      <svg class="absolute left-3 top-2.5 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-        <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
-      </svg>
-      <input x-model="searchQuery" @input="doSearch()" type="text"
-             placeholder="Search summaries…" autofocus
-             class="w-full pl-10 pr-4 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-300 focus:outline-none">
+    <div class="flex gap-2 mb-4 items-stretch">
+      <div class="relative flex-[2]">
+        <svg class="absolute left-3 top-2.5 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+        </svg>
+        <input x-model="searchQuery" @input="doSearch()" type="text"
+               placeholder="Search summaries…" autofocus
+               class="w-full pl-10 pr-4 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-300 focus:outline-none">
+      </div>
+      <div class="relative flex-1 min-w-[150px]" @click.away="searchCourseOpen = false">
+        <button @click="searchCourseOpen = !searchCourseOpen"
+                class="w-full border rounded-lg px-3 py-2 text-sm bg-white text-left focus:ring-2 focus:ring-blue-300 focus:outline-none">
+          <span x-text="searchCourseLabel"></span>
+          <span class="float-right ml-2">▾</span>
+        </button>
+        <div x-show="searchCourseOpen" class="absolute right-0 z-10 mt-1 bg-white border rounded-lg shadow-lg max-h-64 overflow-y-auto w-full min-w-[240px]">
+          <input x-model="searchCourseFilterQuery" type="text"
+                 placeholder="搜索课程名…"
+                 class="w-full border-b px-3 py-2 text-sm sticky top-0 bg-white focus:outline-none">
+          <template x-for="c in searchCourseOptionsFiltered" :key="c.course_id">
+            <label class="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-50 text-sm cursor-pointer">
+              <input type="checkbox" :checked="searchSelectedCourseIds.includes(String(c.course_id))"
+                     @change="toggleSearchCourse(c.course_id, $event.target.checked)"
+                     class="rounded border-gray-300 text-blue-600">
+              <span class="truncate" x-text="c.title || c.course_id"></span>
+            </label>
+          </template>
+          <p x-show="searchCourseOptionsFiltered.length === 0" class="text-xs text-gray-400 px-3 py-2">无匹配课程</p>
+        </div>
+      </div>
     </div>
 
     <div x-show="searchQuery && searchResults.length === 0" class="text-center py-12 text-gray-400 text-sm">

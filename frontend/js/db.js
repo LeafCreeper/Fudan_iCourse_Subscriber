@@ -111,12 +111,19 @@ function _getPptPages(subId) {
 }
 
 /* ── Search ── */
-function _searchSummaries(query) {
+function _searchSummaries(query, courseIds) {
   if (!query || !query.trim()) return [];
   var q = query.trim().toLowerCase();
+  // Optional course filter: when non-empty, only search the given courses.
+  var courseSet = null;
+  if (courseIds && courseIds.length) {
+    courseSet = {};
+    for (var ci = 0; ci < courseIds.length; ci++) courseSet[String(courseIds[ci])] = true;
+  }
   var results = [];
   for (var i = 0; i < _lectures.length && results.length < 50; i++) {
     var lec = _lectures[i];
+    if (courseSet && !courseSet[String(lec.course_id)]) continue;
     var content = _lectureContent[lec.sub_id];
     var summary = (content && content.summary) || "";
     var transcript = (content && content.transcript) || "";

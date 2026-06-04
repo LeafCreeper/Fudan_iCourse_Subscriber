@@ -76,6 +76,17 @@ test("searchSummaries matches loaded PPT/OCR text with hit_field 'ocr'", async (
   assert.equal(ocr.ppt_text, "幻灯片提到了傅里叶变换");
 });
 
+test("searchSummaries restricts results to the given course filter", async () => {
+  const db = freshDb();
+  db.initFromIndex(SAMPLE_INDEX);
+  // "进程" only appears in c2/s3's title; "绪论" only in c1/s1's title.
+  assert.equal(db.searchSummaries("进程").length, 1, "no filter: matches c2");
+  assert.equal(db.searchSummaries("进程", ["c1"]).length, 0, "filtered to c1: excluded");
+  assert.equal(db.searchSummaries("进程", ["c2"]).length, 1, "filtered to c2: included");
+  // Empty filter array behaves like no filter.
+  assert.equal(db.searchSummaries("绪论", []).length, 1, "empty filter == all courses");
+});
+
 test("getMeta reads index meta values", () => {
   const db = freshDb();
   db.initFromIndex(SAMPLE_INDEX);
