@@ -51,6 +51,22 @@ test("bounds concurrency at 6 and refills as tasks finish", async () => {
   assert.equal(ts.filter((t) => t.started).length, 7, "7th dispatched after one finishes");
 });
 
+test("setConcurrency raises the cap and dispatches waiting tasks", async () => {
+  const S = freshScheduler();
+  const log = [];
+  const ts = [];
+  for (let i = 0; i < 10; i++) {
+    const t = makeTask("A" + i, log);
+    ts.push(t);
+    enq(S, { key: "k" + i, group: "g", priority: 0, run: t.run });
+  }
+  await tick();
+  assert.equal(ts.filter((t) => t.started).length, 6, "default cap 6");
+  S.setConcurrency(10);
+  await tick();
+  assert.equal(ts.filter((t) => t.started).length, 10, "all 10 in flight after raising cap");
+});
+
 test("de-duplicates by key: same key returns same promise, runs once", async () => {
   const S = freshScheduler();
   const log = [];

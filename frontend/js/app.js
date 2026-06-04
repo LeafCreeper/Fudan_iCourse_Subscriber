@@ -620,11 +620,22 @@ document.addEventListener("alpine:init", () => {
 
     async _preloadInBackground() {
       var courses = ICS.db.getCourses();
+      // Concurrency = max lectures in any single course, so one focused course
+      // can have all its shards in flight at once (still funneled through the
+      // scheduler's focus/abort logic). Falls back to 1 for an empty catalog.
+      var maxPerCourse = 1;
+      var perCourse = [];
+      for (var i = 0; i < courses.length; i++) {
+        var lecs = ICS.db.getLectures(courses[i].course_id);
+        perCourse.push(lecs);
+        if (lecs.length > maxPerCourse) maxPerCourse = lecs.length;
+      }
+      ICS.scheduler.setConcurrency(maxPerCourse);
       // Enqueue every shard at low priority; the scheduler bounds concurrency
       // and lets focus() jump an opened course ahead of (and pause) the rest.
       for (var i = 0; i < courses.length; i++) {
         var cid = courses[i].course_id;
-        var lecs = ICS.db.getLectures(cid);
+        var lecs = perCourse[i];
         for (var j = 0; j < lecs.length; j++) {
           if (!ICS.db.isLectureLoaded(lecs[j].sub_id)) {
             _loadLecture(lecs[j].sub_id, cid, _PRIO.BG_PRELOAD).catch(function () {});

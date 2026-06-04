@@ -17,6 +17,7 @@
 
 window.ICS = window.ICS || {};
 
+// Default cap until the app sets it from the loaded index (setConcurrency).
 var _CONCURRENCY = 6;
 
 var _queue = [];            // pending tasks
@@ -129,6 +130,11 @@ function _focus(group) {
 
 function _blur() { _focus(null); }
 
+function _setConcurrency(n) {
+  _CONCURRENCY = Math.max(1, n | 0);
+  _pump();
+}
+
 function _reset() {
   var all = _queue.slice();
   _inFlight.forEach(function (t) { all.push(t); });
@@ -147,5 +153,6 @@ window.ICS.scheduler = {
   enqueue: _enqueue,
   focus: _focus,
   blur: _blur,
+  setConcurrency: _setConcurrency,
   reset: _reset,
 };
