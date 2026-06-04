@@ -795,6 +795,17 @@
   </div>
 </div>
 
+<!-- ── GLOBAL LOAD PROGRESS BAR ── -->
+<div x-show="loadProgress.lecturesPending > 0 && ['courses','lectures','detail','search','settings','subscriptions'].includes(view)"
+     x-transition.opacity
+     class="fixed left-0 right-0 z-20 bg-amber-50 border-t border-amber-200 text-amber-700 text-xs text-center py-1.5 safe-bottom"
+     :class="['courses','lectures','detail','search','settings','subscriptions'].includes(view) ? 'bottom-[52px] md:bottom-0' : 'bottom-0'">
+  <span class="inline-flex items-center gap-2">
+    <span class="inline-block w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
+    正在后台加载：还有 <span x-text="loadProgress.coursesPending"></span> 门课、<span x-text="loadProgress.lecturesPending"></span> 节课未加载
+  </span>
+</div>
+
 <!-- ── TOAST ── -->
 <div x-show="toast" x-transition.opacity
      class="toast"

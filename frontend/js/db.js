@@ -85,6 +85,24 @@ function _isLectureLoaded(subId) {
   return subId in _lectureContent;
 }
 
+/* Load progress: lectures whose content shard hasn't loaded yet, and courses
+ * that still have at least one un-loaded lecture. Drives the global progress
+ * bar. (Ignores PPT — counts lecture content only.) */
+function _getLoadProgress() {
+  var lecturesPending = 0;
+  var courseHasPending = {};
+  for (var i = 0; i < _lectures.length; i++) {
+    var l = _lectures[i];
+    if (!(l.sub_id in _lectureContent)) {
+      lecturesPending++;
+      courseHasPending[l.course_id] = true;
+    }
+  }
+  var coursesPending = 0;
+  for (var cid in courseHasPending) coursesPending++;
+  return { coursesPending: coursesPending, lecturesPending: lecturesPending };
+}
+
 /* ── Lazy loaders (called by app.js with a fetcher function) ── */
 async function _loadLectureContent(subId, fetcher) {
   if (_lectureContent[subId]) return _lectureContent[subId];
@@ -278,6 +296,7 @@ window.ICS.db = {
   getLectures: _getLectures,
   getLecture: _getLecture,
   isLectureLoaded: _isLectureLoaded,
+  getLoadProgress: _getLoadProgress,
   loadLectureContent: _loadLectureContent,
   loadPptPages: _loadPptPages,
   getPptPages: _getPptPages,

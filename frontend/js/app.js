@@ -181,6 +181,8 @@ document.addEventListener("alpine:init", () => {
     starred: _loadStarred(),
     _catalogLoaded: false,
     catalogLoading: false,
+    loadProgress: { coursesPending: 0, lecturesPending: 0 },
+    _loadProgressTimer: null,
 
     async init() {
       const detected = ICS.github.detectRepo();
@@ -222,6 +224,7 @@ document.addEventListener("alpine:init", () => {
 
         // 5) Background preload (non-blocking)
         this._preloadInBackground();
+        this._trackLoadProgress();
       } catch (e) {
         this.error = e.message;
         this.view = "error";
@@ -678,6 +681,22 @@ document.addEventListener("alpine:init", () => {
           break;
         }
       }
+    },
+
+    // Poll db load progress for the global bar until everything is loaded.
+    // Cheap (a single pass over the lecture skeletons) and self-stopping.
+    _trackLoadProgress() {
+      var self = this;
+      clearInterval(this._loadProgressTimer);
+      var update = function () {
+        self.loadProgress = ICS.db.getLoadProgress();
+        if (self.loadProgress.lecturesPending === 0) {
+          clearInterval(self._loadProgressTimer);
+          self._loadProgressTimer = null;
+        }
+      };
+      update();
+      this._loadProgressTimer = setInterval(update, 500);
     },
 
     async _preloadInBackground() {

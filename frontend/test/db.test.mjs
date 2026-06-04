@@ -50,6 +50,20 @@ test("lecture content lazy-loads once and is then marked loaded", async () => {
   assert.equal(db.getLecture("s1").summary, "S");
 });
 
+test("getLoadProgress counts pending courses and lectures, decrementing as shards load", async () => {
+  const db = freshDb();
+  db.initFromIndex(SAMPLE_INDEX); // c1: s1,s2 ; c2: s3
+  let p = db.getLoadProgress();
+  assert.deepEqual(p, { coursesPending: 2, lecturesPending: 3 });
+  await db.loadLectureContent("s1", async () => ({ summary: "x" }));
+  assert.deepEqual(db.getLoadProgress(), { coursesPending: 2, lecturesPending: 2 });
+  await db.loadLectureContent("s2", async () => ({ summary: "x" }));
+  // c1 fully loaded now → only c2 pending
+  assert.deepEqual(db.getLoadProgress(), { coursesPending: 1, lecturesPending: 1 });
+  await db.loadLectureContent("s3", async () => ({ summary: "x" }));
+  assert.deepEqual(db.getLoadProgress(), { coursesPending: 0, lecturesPending: 0 });
+});
+
 test("searchSummaries matches loaded summary text and reports hit field", async () => {
   const db = freshDb();
   db.initFromIndex(SAMPLE_INDEX);
