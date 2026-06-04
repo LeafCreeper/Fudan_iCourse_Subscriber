@@ -633,13 +633,34 @@ document.addEventListener("alpine:init", () => {
     // Bump every lecture of one course to focus-preload priority so the
     // opened course finishes ahead of the global background sweep.
     _focusPreloadCourse(courseId) {
+      var self = this;
       var lecs = ICS.db.getLectures(courseId);
       for (var i = 0; i < lecs.length; i++) {
-        if (!ICS.db.isLectureLoaded(lecs[i].sub_id)) {
-          _loadLecture(lecs[i].sub_id, courseId, _PRIO.FOCUS_PRELOAD).catch(function () {});
+        var subId = lecs[i].sub_id;
+        if (!ICS.db.isLectureLoaded(subId)) {
+          (function (sid) {
+            _loadLecture(sid, courseId, _PRIO.FOCUS_PRELOAD)
+              .then(function () { self._patchLectureInList(sid); })
+              .catch(function () {});
+          })(subId);
         }
       }
       _loadPpt(courseId, _PRIO.FOCUS_PRELOAD).catch(function () {});
+    },
+    // Once a lecture's encrypted shard has loaded, patch its entry in the
+    // currently-displayed list so the summary preview renders live (no need
+    // to leave and re-enter the course). Matches by sub_id, so late loads
+    // from a course the user already navigated away from are harmless no-ops.
+    _patchLectureInList(subId) {
+      if (!this.lectures || !this.lectures.length) return;
+      var full = ICS.db.getLecture(subId);
+      if (!full) return;
+      for (var i = 0; i < this.lectures.length; i++) {
+        if (String(this.lectures[i].sub_id) === String(subId)) {
+          this.lectures[i].summary = full.summary;
+          break;
+        }
+      }
     },
 
     async _preloadInBackground() {
