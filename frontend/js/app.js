@@ -579,13 +579,15 @@ document.addEventListener("alpine:init", () => {
         return;
       }
       var markdown = this._buildSelectedMarkdown(selected);
-      var blob = new Blob([markdown], { type: "text/plain;charset=utf-8" });
+      var blob = new Blob([markdown], { type: "text/markdown;charset=utf-8" });
       var url = URL.createObjectURL(blob);
       var a = document.createElement("a");
       a.href = url;
       a.download = this._makeMarkdownFilename();
+      a.addEventListener("click", function () {
+        setTimeout(function () { URL.revokeObjectURL(url); }, 100);
+      }, { once: true });
       a.click();
-      setTimeout(function () { URL.revokeObjectURL(url); }, 5000);
       this._toast("已下载 " + selected.length + " 节课的 Markdown", "success");
     },
 
