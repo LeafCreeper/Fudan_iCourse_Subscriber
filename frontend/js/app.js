@@ -584,10 +584,8 @@ document.addEventListener("alpine:init", () => {
       var a = document.createElement("a");
       a.href = url;
       a.download = this._makeMarkdownFilename();
-      document.body.appendChild(a);
       a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
       this._toast("已下载 " + selected.length + " 节课的 Markdown", "success");
     },
 
