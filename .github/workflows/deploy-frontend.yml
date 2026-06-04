@@ -3,14 +3,12 @@ name: Deploy Frontend
 on:
   push:
     branches: [main]
-    paths: ['frontend/**']
+    paths: ['frontend/**', 'scripts/build_frontend.py', 'scripts/build_crypto.py']
+  # Rebuild Pages whenever iCourse Check completes (it pushes new data to data branch)
+  workflow_run:
+    workflows: ["iCourse Check"]
+    types: [completed]
   workflow_dispatch:
-    inputs:
-      branch:
-        description: "Branch to deploy frontend from (e.g. main, dev)"
-        required: true
-        default: "main"
-        type: string
 
 permissions:
   contents: read
@@ -24,16 +22,44 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    # Skip if triggered by a failed workflow_run
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      # On manual dispatch we honour the ``branch`` input; for the auto
-      # push trigger this resolves to '' and actions/checkout falls back
-      # to the triggering ref (i.e. main per the push filter above).
       - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          ref: ${{ inputs.branch || github.ref }}
+          python-version: "3.12"
+
+      - name: Cache Python packages
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.pythonLocation }}/lib/python*/site-packages
+          key: pip-build-frontend-${{ hashFiles('scripts/build_crypto.py') }}
+
+      - name: Install dependencies
+        run: pip install pycryptodome cryptography
+
+      - name: Fetch data branch
+        run: |
+          mkdir -p data_branch/data/shards
+          git fetch origin data --depth=1
+          git show origin/data:data/icourse-index.enc > data_branch/data/icourse-index.enc
+          for path in $(git ls-tree -r --name-only origin/data | grep '^data/shards/'); do
+            base=$(basename "$path")
+            git show "origin/data:$path" > "data_branch/data/shards/$base"
+          done
+          echo "Fetched $(ls data_branch/data/shards | wc -l) shard(s)."
+
+      - name: Build frontend
+        env:
+          STUID: ${{ secrets.STUID }}
+          UISPSW: ${{ secrets.UISPSW }}
+        run: python scripts/build_frontend.py --data-dir data_branch --output dist
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
@@ -41,7 +67,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: ./frontend
+          path: ./dist
 
       - name: Deploy to GitHub Pages
         id: deployment
