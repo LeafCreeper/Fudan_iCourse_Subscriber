@@ -122,12 +122,20 @@ function _searchSummaries(query) {
     var transcript = (content && content.transcript) || "";
     var subTitle = lec.sub_title || "";
     var hitField = null;
+    var pptText = "";
     if (summary && summary.toLowerCase().indexOf(q) !== -1) {
       hitField = "summary";
     } else if (subTitle.toLowerCase().indexOf(q) !== -1) {
       hitField = "sub_title";
     } else if (transcript && transcript.toLowerCase().indexOf(q) !== -1) {
       hitField = "transcript";
+    } else {
+      // OCR / PPT text (lazy-loaded into _pptCache; matches whatever is loaded)
+      var pages = _getPptPages(lec.sub_id);
+      for (var p = 0; p < pages.length; p++) {
+        var t = pages[p].text || "";
+        if (t.toLowerCase().indexOf(q) !== -1) { hitField = "ocr"; pptText = t; break; }
+      }
     }
     if (hitField) {
       var course = null;
@@ -141,6 +149,7 @@ function _searchSummaries(query) {
         course_title: course ? course.title : "",
         summary: summary,
         transcript: transcript,
+        ppt_text: pptText,
         hit_field: hitField,
       });
     }

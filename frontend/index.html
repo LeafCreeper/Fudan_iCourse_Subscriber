@@ -424,11 +424,14 @@
             <span class="text-[10px] uppercase tracking-wide text-gray-400 flex-shrink-0"
                   x-text="r.hit_field === 'transcript' ? '转录命中'
                         : r.hit_field === 'sub_title'  ? '标题命中'
+                        : r.hit_field === 'ocr'        ? 'OCR命中'
                         : '摘要命中'"></span>
           </div>
           <h4 class="font-medium text-gray-800 text-sm mt-0.5" x-text="r.sub_title || 'Untitled'"></h4>
           <p class="text-xs text-gray-400 mt-1 line-clamp-2"
-             x-html="highlight(r.hit_field === 'transcript' ? r.transcript : r.summary, searchQuery)"></p>
+             x-html="highlight(r.hit_field === 'transcript' ? r.transcript
+                    : r.hit_field === 'ocr' ? r.ppt_text
+                    : r.summary, searchQuery)"></p>
         </button>
       </template>
     </div>

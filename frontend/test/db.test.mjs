@@ -62,6 +62,20 @@ test("searchSummaries matches loaded summary text and reports hit field", async 
   assert.ok(byTranscript.some((r) => r.hit_field === "transcript"));
 });
 
+test("searchSummaries matches loaded PPT/OCR text with hit_field 'ocr'", async () => {
+  const db = freshDb();
+  db.initFromIndex(SAMPLE_INDEX);
+  // PPT pages are keyed by course_id and contain per-sub_id page text.
+  await db.loadPptPages("c1", async () => [
+    { sub_id: "s2", page_num: 1, text: "幻灯片提到了傅里叶变换", created_sec: 0 },
+  ]);
+  const hits = db.searchSummaries("傅里叶");
+  const ocr = hits.find((r) => r.sub_id === "s2");
+  assert.ok(ocr, "found the lecture via PPT text");
+  assert.equal(ocr.hit_field, "ocr");
+  assert.equal(ocr.ppt_text, "幻灯片提到了傅里叶变换");
+});
+
 test("getMeta reads index meta values", () => {
   const db = freshDb();
   db.initFromIndex(SAMPLE_INDEX);
