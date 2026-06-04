@@ -290,20 +290,30 @@
             <h4 class="font-medium text-gray-800 text-sm truncate" x-text="lec.sub_title || 'Untitled'"></h4>
             <span class="flex-shrink-0 text-xs px-2 py-0.5 rounded-full"
                   :class="{
-                    'badge-ready': lec.state === 'ready',
+                    'badge-ready': lec.state === 'ready' && lec.summary,
+                    'badge-loading': lec.state === 'ready' && !lec.summary,
                     'badge-processing': lec.state === 'processing',
                     'badge-waiting': lec.state === 'waiting',
                     'badge-failed': lec.state === 'failed'
                   }"
-                  x-text="lec.state === 'ready' ? 'Ready' :
+                  x-text="lec.state === 'ready' ? (lec.summary ? 'Ready' : '加载中…') :
                           lec.state === 'processing' ? 'Summarizing…' :
                           lec.state === 'waiting' ? 'Waiting' :
                           'Failed: ' + (lec.error_stage || 'unknown')"></span>
           </div>
-          <!-- Preview snippet for ready lectures -->
-          <p x-show="lec.state === 'ready' && lec.summary"
-             class="text-xs text-gray-400 mt-1.5 line-clamp-2"
-             x-text="snippet(lec.summary, 100)"></p>
+          <!-- Preview area for ready lectures: fixed 2-line height so content
+               arriving causes no layout shift. Real summary once loaded,
+               shimmering skeleton lines while the shard is still in flight. -->
+          <div x-show="lec.state === 'ready'" class="mt-1.5" style="min-height: 2rem;">
+            <p x-show="lec.summary" class="text-xs text-gray-400 line-clamp-2"
+               x-text="snippet(lec.summary, 100)"></p>
+            <template x-if="!lec.summary">
+              <div class="space-y-1.5">
+                <div class="skeleton h-3 w-full"></div>
+                <div class="skeleton h-3 w-3/5"></div>
+              </div>
+            </template>
+          </div>
           <!-- Error detail -->
           <p x-show="lec.state === 'failed' && lec.error_msg"
              class="text-xs text-red-400 mt-1 truncate" x-text="lec.error_msg"></p>

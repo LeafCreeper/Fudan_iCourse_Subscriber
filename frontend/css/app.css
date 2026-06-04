@@ -51,6 +51,21 @@
 .badge-processing { background: #fff3e0; color: #e65100; }
 .badge-waiting    { background: #f3f4f6; color: #6b7280; }
 .badge-failed     { background: #ffebee; color: #c62828; }
+.badge-loading    { background: #fef9c3; color: #a16207; }
+
+/* Skeleton placeholder — shown in a ready lecture's preview area while its
+   encrypted shard is still loading. The wrapper reserves the 2-line height
+   the real summary will occupy, so content arriving causes no layout jump. */
+.skeleton {
+  background: linear-gradient(90deg, #f3f4f6 25%, #e5e7eb 37%, #f3f4f6 63%);
+  background-size: 400% 100%;
+  animation: skeleton-shimmer 1.4s ease infinite;
+  border-radius: 4px;
+}
+@keyframes skeleton-shimmer {
+  0%   { background-position: 100% 50%; }
+  100% { background-position: 0 50%; }
+}
 
 /* View transitions */
 .view-enter { animation: fadeIn 0.15s ease-out; }
