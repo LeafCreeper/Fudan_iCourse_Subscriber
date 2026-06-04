@@ -164,8 +164,9 @@ document.addEventListener("alpine:init", () => {
     settingsForm: {}, showSecrets: {},
     exportDialogOpen: false, exportSelection: {}, exportingPdf: false,
     repoOwner: "", repoName: "",
-    _history: [],
     _navToken: 0,
+    _applyingHash: false,
+    _selfHashWrite: false,
     allCoursesTerms: [],
     subsTerms: [], subsDepts: [], deptSearchQuery: "",
     subsSearchTitle: "", subsSearchTeacher: "",
@@ -189,6 +190,14 @@ document.addEventListener("alpine:init", () => {
       const s = _loadSettings();
       this.repoOwner = s.owner || (detected?.owner ?? "");
       this.repoName = s.repo || (detected?.repo ?? "");
+      // Browser back/forward and manual hash edits re-navigate. Skip the
+      // events caused by our own programmatic hash writes (in _go).
+      window.addEventListener("hashchange", () => {
+        if (this._selfHashWrite) { this._selfHashWrite = false; return; }
+        if (this._applyingHash) return;
+        if (ICS.routing.ROUTABLE_VIEWS.indexOf(this.view) === -1 && this.view !== "loading") return;
+        this._applyHash();
+      });
       const creds = _loadCreds();
       if (!creds) { this.view = "setup"; return; }
       await this._loadDB(creds);
@@ -216,10 +225,15 @@ document.addEventListener("alpine:init", () => {
         var indexData = await _v3Decrypt("index.enc");
         ICS.db.initFromIndex(indexData);
 
-        // 4) Show courses
+        // 4) Show courses (or restore the position encoded in the URL hash)
         this.courses = this._sortCoursesByStar(ICS.db.getCourses());
-        this.view = "courses";
         var self = this;
+        var route = ICS.routing.parseHash(location.hash);
+        if (route.view && route.view !== "courses") {
+          this._applyHash();
+        } else {
+          this.view = "courses";
+        }
         this.$nextTick(function() { self.courses = self._sortCoursesByStar(self.courses); });
 
         // 5) Background preload (non-blocking)
@@ -232,9 +246,9 @@ document.addEventListener("alpine:init", () => {
     },
 
     navigate(view, params) {
-      params = params || {};
-      this._history.push({ view: this.view, courseId: this.currentCourse?.course_id, lectureId: this.currentLecture?.sub_id });
-      this._go(view, params);
+      // Browser history is the single source of truth now: _go writes the
+      // hash, which pushes a history entry. No separate in-app stack.
+      this._go(view, params || {});
     },
     async _go(view, params) {
       params = params || {};
@@ -251,9 +265,21 @@ document.addEventListener("alpine:init", () => {
         this.lectures = ICS.db.getLectures(params.courseId);
       }
       else if (view === "detail" && params.subId) {
+        // Ensure the course context (currentCourse + lectures) matches this
+        // lecture, so prev/next nav works even when arriving via deep link or
+        // a refresh straight into detail.
+        var detSkel = ICS.db.getLecture(params.subId);
+        if (detSkel) {
+          var detCid = detSkel.course_id;
+          if (!this.currentCourse || this.currentCourse.course_id !== detCid) {
+            this.currentCourse = this.courses.find(x => x.course_id === detCid)
+              || { course_id: detCid, title: "...", teacher: "" };
+            this.lectures = ICS.db.getLectures(detCid);
+          }
+        }
         // Lazy-load lecture content if not yet loaded
         if (!ICS.db.isLectureLoaded(params.subId)) {
-          var skel = ICS.db.getLecture(params.subId);
+          var skel = detSkel;
           if (skel) ICS.scheduler.focus(skel.course_id);
           try {
             await _loadLecture(params.subId, skel ? skel.course_id : null, _PRIO.DETAIL);
@@ -290,6 +316,17 @@ document.addEventListener("alpine:init", () => {
       }
       this.view = view;
       if (view !== "lectures") this.exportDialogOpen = false;
+      // Reflect the new position in the URL hash (browser history entry),
+      // unless this navigation was itself triggered by a hash change.
+      if (!this._applyingHash) {
+        var courseId = (view === "lectures") ? params.courseId
+          : (this.currentCourse ? this.currentCourse.course_id : null);
+        var subId = (view === "detail")
+          ? params.subId
+          : (this.currentLecture ? this.currentLecture.sub_id : null);
+        var h = ICS.routing.hashFor(view, courseId, subId);
+        if (h && location.hash !== h) { this._selfHashWrite = true; location.hash = h; }
+      }
     },
     _sortCoursesByStar(list) {
       var starred = this.starred;
@@ -301,9 +338,35 @@ document.addEventListener("alpine:init", () => {
       });
     },
     goBack() {
-      const p = this._history.pop();
-      if (p) this._go(p.view, { courseId: p.courseId, subId: p.lectureId });
-      else this._go("courses");
+      // Defer to the browser. If there's no prior entry (e.g. opened via a
+      // deep link), fall back to the course list.
+      if (window.history.length > 1) window.history.back();
+      else this.navigate("courses");
+    },
+    // Apply the current URL hash as a navigation (driven by hashchange and
+    // by initial load). Sets _applyingHash so _go doesn't re-write the hash.
+    _applyHash() {
+      var route = ICS.routing.parseHash(location.hash);
+      this._applyingHash = true;
+      try {
+        if (route.view === "subscriptions") {
+          // Subscriptions needs its catalog-loading side effects.
+          this.openSubscriptions();
+        } else if (route.view === "lectures") {
+          // Unknown course (data changed) → fall back to the list.
+          var known = ICS.db.getCourses().some((c) => String(c.course_id) === String(route.courseId));
+          if (known) { this._go("lectures", { courseId: route.courseId }); }
+          else { this._go("courses"); this._selfHashWrite = true; location.hash = "#/courses"; }
+        } else if (route.view === "detail") {
+          // Unknown lecture (data changed) → fall back to the list.
+          if (ICS.db.getLecture(route.subId)) { this._go("detail", { subId: route.subId }); }
+          else { this._go("courses"); this._selfHashWrite = true; location.hash = "#/courses"; }
+        } else {
+          this._go(route.view || "courses", {});
+        }
+      } finally {
+        this._applyingHash = false;
+      }
     },
 
     openCourse(id) { this.navigate("lectures", { courseId: id }); },
