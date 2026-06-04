@@ -92,17 +92,45 @@ var _DATA_BASE = "data/";
 /* ── V3 master key (held in memory after login) ── */
 var _masterKey = null;
 
-async function _v3Fetch(path) {
-  var res = await fetch(_DATA_BASE + path);
+async function _v3Fetch(path, signal) {
+  var res = await fetch(_DATA_BASE + path, signal ? { signal: signal } : undefined);
   if (!res.ok) throw new Error("Failed to fetch " + path + ": " + res.status);
   return new Uint8Array(await res.arrayBuffer());
 }
 
-async function _v3Decrypt(path) {
-  var enc = await _v3Fetch(path);
+async function _v3Decrypt(path, signal) {
+  var enc = await _v3Fetch(path, signal);
   var compressed = await ICS.crypto.hkdfDecrypt(enc, _masterKey);
   var decompressed = await _gunzip(compressed);
   return JSON.parse(new TextDecoder().decode(decompressed));
+}
+
+/* ── Scheduler-routed lazy loaders ──
+ * All on-demand shard loads funnel through ICS.scheduler so they share one
+ * bounded, focus-aware pipe. focus(courseId) aborts other-course requests in
+ * flight and dedicates the pipe to the opened course; loads dedupe by key. */
+var _PRIO = { DETAIL: 100, PPT: 90, FOCUS_PRELOAD: 10, BG_PRELOAD: 1 };
+
+function _loadLecture(subId, courseId, priority) {
+  return ICS.db.loadLectureContent(subId, function (id) {
+    return ICS.scheduler.enqueue({
+      key: "lecture:" + id,
+      group: courseId,
+      priority: priority,
+      run: function (signal) { return _v3Decrypt("lectures/" + id + ".enc", signal); },
+    });
+  });
+}
+
+function _loadPpt(courseId, priority) {
+  return ICS.db.loadPptPages(courseId, function (cid) {
+    return ICS.scheduler.enqueue({
+      key: "ppt:" + cid,
+      group: courseId,
+      priority: priority,
+      run: function (signal) { return _v3Decrypt("ppt/" + cid + ".enc", signal); },
+    });
+  });
 }
 
 /* ── Alpine app ── */
@@ -122,6 +150,7 @@ document.addEventListener("alpine:init", () => {
     exportDialogOpen: false, exportSelection: {}, exportingPdf: false,
     repoOwner: "", repoName: "",
     _history: [],
+    _navToken: 0,
     allCoursesTerms: [],
     subsTerms: [], subsDepts: [], deptSearchQuery: "",
     subsSearchTitle: "", subsSearchTeacher: "",
@@ -149,6 +178,7 @@ document.addEventListener("alpine:init", () => {
 
     async _loadDB(creds) {
       this.view = "loading"; this.error = null;
+      ICS.scheduler.reset();
       try {
         // 1) Fetch meta.json (plaintext)
         this.loadingMsg = "Loading metadata...";
@@ -190,40 +220,49 @@ document.addEventListener("alpine:init", () => {
     async _go(view, params) {
       params = params || {};
       this.error = null;
+      var navToken = ++this._navToken;
       if (view === "courses") {
+        ICS.scheduler.blur();
         this.courses = this._sortCoursesByStar(ICS.db.getCourses());
       }
       else if (view === "lectures" && params.courseId) {
+        ICS.scheduler.focus(params.courseId);
+        this._focusPreloadCourse(params.courseId);
         this.currentCourse = this.courses.find(x => x.course_id === params.courseId) || { course_id: params.courseId, title: "...", teacher: "" };
         this.lectures = ICS.db.getLectures(params.courseId);
       }
       else if (view === "detail" && params.subId) {
         // Lazy-load lecture content if not yet loaded
         if (!ICS.db.isLectureLoaded(params.subId)) {
+          var skel = ICS.db.getLecture(params.subId);
+          if (skel) ICS.scheduler.focus(skel.course_id);
           try {
-            await ICS.db.loadLectureContent(params.subId, async function(subId) {
-              return await _v3Decrypt("lectures/" + subId + ".enc");
-            });
+            await _loadLecture(params.subId, skel ? skel.course_id : null, _PRIO.DETAIL);
           } catch (e) {
             console.warn("Failed to load lecture content:", e);
           }
         }
+        // Bail if the user navigated elsewhere while we were loading.
+        if (navToken !== this._navToken) return;
         this.currentLecture = ICS.db.getLecture(params.subId);
         // Load PPT pages for the course (lazy)
         if (this.currentLecture) {
           var courseId = this.currentLecture.course_id;
           try {
-            await ICS.db.loadPptPages(courseId, async function(cid) {
-              return await _v3Decrypt("ppt/" + cid + ".enc");
-            });
+            await _loadPpt(courseId, _PRIO.PPT);
           } catch (e) {
             // PPT might not exist for all courses
           }
+          if (navToken !== this._navToken) return;
           this.currentPptPages = ICS.db.getPptPages(params.subId);
         } else {
           this.currentPptPages = [];
         }
         this.detailView = "summary";
+      }
+      else {
+        // settings / subscriptions / search — release the focused course
+        ICS.scheduler.blur();
       }
       this.view = view;
       if (view !== "lectures") this.exportDialogOpen = false;
@@ -293,9 +332,7 @@ document.addEventListener("alpine:init", () => {
         // Load content if needed
         if (!ICS.db.isLectureLoaded(l.sub_id)) {
           try {
-            await ICS.db.loadLectureContent(l.sub_id, async function(subId) {
-              return await _v3Decrypt("lectures/" + subId + ".enc");
-            });
+            await _loadLecture(l.sub_id, l.course_id || (this.currentCourse && this.currentCourse.course_id), _PRIO.DETAIL);
           } catch (e) { continue; }
         }
         var full = ICS.db.getLecture(l.sub_id);
@@ -370,6 +407,7 @@ document.addEventListener("alpine:init", () => {
     },
     clearAllData() {
       if (!confirm("Clear all saved credentials?")) return;
+      ICS.scheduler.reset();
       localStorage.removeItem(_LS + "creds");
       localStorage.removeItem(_LS + "settings");
       _masterKey = null;
@@ -389,7 +427,12 @@ document.addEventListener("alpine:init", () => {
       // Load catalog on demand
       if (!this._catalogLoaded) {
         try {
-          var catalogData = await _v3Decrypt("catalog.enc");
+          var catalogData = await ICS.scheduler.enqueue({
+            key: "catalog",
+            group: null,
+            priority: _PRIO.DETAIL,
+            run: function (signal) { return _v3Decrypt("catalog.enc", signal); },
+          });
           ICS.db.loadCatalog(catalogData);
           this._catalogLoaded = true;
         } catch (e) {
@@ -563,32 +606,41 @@ document.addEventListener("alpine:init", () => {
       finally { this.singleRunTriggering = false; }
     },
 
-    async _preloadInBackground() {
-      var courses = ICS.db.getCourses();
-      // 1) Preload all lecture content (concurrency = max lectures in any single course)
-      var allSubs = [];
-      var maxPerCourse = 0;
-      for (var i = 0; i < courses.length; i++) {
-        var lecs = ICS.db.getLectures(courses[i].course_id);
-        if (lecs.length > maxPerCourse) maxPerCourse = lecs.length;
-        for (var j = 0; j < lecs.length; j++) {
-          if (!ICS.db.isLectureLoaded(lecs[j].sub_id)) allSubs.push(lecs[j].sub_id);
+    // Bump every lecture of one course to focus-preload priority so the
+    // opened course finishes ahead of the global background sweep.
+    _focusPreloadCourse(courseId) {
+      var lecs = ICS.db.getLectures(courseId);
+      for (var i = 0; i < lecs.length; i++) {
+        if (!ICS.db.isLectureLoaded(lecs[i].sub_id)) {
+          _loadLecture(lecs[i].sub_id, courseId, _PRIO.FOCUS_PRELOAD).catch(function () {});
         }
       }
-      var concurrency = Math.max(maxPerCourse, 1);
-      for (var start = 0; start < allSubs.length; start += concurrency) {
-        var batch = allSubs.slice(start, start + concurrency);
-        await Promise.all(batch.map(function(sub) {
-          return ICS.db.loadLectureContent(sub, function(id) { return _v3Decrypt("lectures/" + id + ".enc"); }).catch(function() {});
-        }));
+      _loadPpt(courseId, _PRIO.FOCUS_PRELOAD).catch(function () {});
+    },
+
+    async _preloadInBackground() {
+      var courses = ICS.db.getCourses();
+      // Enqueue every shard at low priority; the scheduler bounds concurrency
+      // and lets focus() jump an opened course ahead of (and pause) the rest.
+      for (var i = 0; i < courses.length; i++) {
+        var cid = courses[i].course_id;
+        var lecs = ICS.db.getLectures(cid);
+        for (var j = 0; j < lecs.length; j++) {
+          if (!ICS.db.isLectureLoaded(lecs[j].sub_id)) {
+            _loadLecture(lecs[j].sub_id, cid, _PRIO.BG_PRELOAD).catch(function () {});
+          }
+        }
+        _loadPpt(cid, _PRIO.BG_PRELOAD).catch(function () {});
       }
-      // 2) PPT (parallel)
-      await Promise.all(courses.map(function(c) {
-        return ICS.db.loadPptPages(c.course_id, function(id) { return _v3Decrypt("ppt/" + id + ".enc"); }).catch(function() {});
-      }));
-      // 3) Catalog
+      // Catalog (lowest priority, not tied to any course)
       if (!this._catalogLoaded) {
-        try { ICS.db.loadCatalog(await _v3Decrypt("catalog.enc")); this._catalogLoaded = true; } catch (e) {}
+        ICS.scheduler.enqueue({
+          key: "catalog",
+          group: null,
+          priority: 0,
+          run: function (signal) { return _v3Decrypt("catalog.enc", signal); },
+        }).then((data) => { ICS.db.loadCatalog(data); this._catalogLoaded = true; })
+          .catch(function () {});
       }
     },
 
