@@ -15,11 +15,19 @@
   overflow-y: hidden;
   -webkit-overflow-scrolling: touch;
   padding: 4px 0;
+  max-width: 100%;
+  font-size: 1em;
 }
 
 /* Ensure inline KaTeX doesn't break lines unexpectedly */
 .prose .katex {
   white-space: nowrap;
+  max-width: 100%;
+}
+
+.prose .katex-error {
+  color: #1a1a1a !important;
+  font-size: 1em !important;
 }
 
 /* Reading typography for the detail view */
@@ -28,6 +36,18 @@
   line-height: 1.8;
   color: #1a1a1a;
   word-break: break-word;
+}
+.prose :where(p, li, blockquote, td, th) {
+  color: #1a1a1a;
+  font-size: 1em;
+  line-height: inherit;
+}
+.prose :where(p, h1, h2, h3, h4, h5, h6, ul, ol, blockquote, pre, table) {
+  max-width: 100%;
+}
+.prose img, .prose video, .prose canvas, .prose svg {
+  max-width: 100%;
+  height: auto;
 }
 .prose h3 { font-size: 1.15em; font-weight: 700; margin: 1.4em 0 0.6em; color: #2c3e50; }
 .prose h4 { font-size: 1.05em; font-weight: 600; margin: 1.2em 0 0.5em; color: #34495e; }

@@ -164,6 +164,15 @@ jobs:
           RECEIVER_EMAIL: ${{ secrets.RECEIVER_EMAIL }}
         run: python -u main.py
 
+      - name: Audit summary display risks
+        if: always() && hashFiles('data/icourse.db') != ''
+        continue-on-error: true
+        run: |
+          python scripts/audit_summaries.py \
+            --db data/icourse.db \
+            --json data/summary-audit.json \
+            --fail-on none
+
       - name: Deploy database to data branch
         if: always()
         env:

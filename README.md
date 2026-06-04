@@ -78,6 +78,8 @@
 
 首次运行会处理所有已有录播，后续只处理新增课次。
 
+每轮运行在部署数据库前会执行摘要显示审查层：`scripts/audit_summaries.py` 会扫描已生成摘要中的坏 Markdown/LaTeX 风险（例如不成对的 `$`/`$$`/`\[`、HTML 颜色字号、疑似 OCR 公式残片、过长行内公式），并把统计写入 Actions summary。默认只输出数量和课次标识，不在 CI 日志中泄露摘要正文；本地排查时可运行 `python scripts/audit_summaries.py --db data/icourse.db --json audit.json --include-snippets` 查看上下文片段。
+
 ## 前端页面（索引与查看）
 
 ![alt text](docs/frontend.png)

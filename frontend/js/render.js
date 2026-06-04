@@ -36,8 +36,10 @@ function _stashFormulas(mdText) {
     return stash("\\[" + f + "\\]");
   });
 
-  // 3. Stash $...$ (inline math — non-greedy to pair nearest closing $)
-  text = text.replace(/\$([\s\S]+?)\$/g, function (_, f) {
+  // 3. Stash $...$ (inline math). Keep it on one line so one stray
+  // dollar cannot swallow a whole paragraph and turn prose into a KaTeX
+  // error block.
+  text = text.replace(/\$([^\n$]+?)\$/g, function (_, f) {
     return stash("\\(" + f + "\\)");
   });
 
@@ -52,12 +54,47 @@ function _restoreFormulas(html, formulas) {
   return html;
 }
 
+function _normalizeDisplayText(mdText) {
+  var text = String(mdText || "");
+
+  // LLMs and OCR can produce orphan math delimiters. Balanced formulas stay
+  // renderable; malformed delimiters are neutralized so the note remains read-
+  // able instead of becoming a large red KaTeX error region.
+  var dollarPairs = (text.match(/\$\$/g) || []).length;
+  if (dollarPairs % 2 === 1) text = text.replace(/\$\$/g, "");
+
+  var singleDollars = (text.match(/(^|[^$])\$(?!$)/g) || []).length;
+  if (singleDollars % 2 === 1) text = text.replace(/\$/g, "");
+
+  var openBlocks = (text.match(/\\\[/g) || []).length;
+  var closeBlocks = (text.match(/\\\]/g) || []).length;
+  if (openBlocks !== closeBlocks) text = text.replace(/\\[\[\]]/g, "");
+
+  var openInline = (text.match(/\\\(/g) || []).length;
+  var closeInline = (text.match(/\\\)/g) || []).length;
+  if (openInline !== closeInline) text = text.replace(/\\[()]/g, "");
+
+  return text;
+}
+
 function _renderMarkdown(mdText) {
   if (!mdText) return "";
-  var stashed = _stashFormulas(mdText);
+  var stashed = _stashFormulas(_normalizeDisplayText(mdText));
   var rawHtml = marked.parse(stashed.text, { breaks: true });
   var restored = _restoreFormulas(rawHtml, stashed.formulas);
-  return DOMPurify.sanitize(restored);
+  return DOMPurify.sanitize(restored, {
+    ALLOWED_TAGS: [
+      "a", "blockquote", "br", "code", "del", "em", "h1", "h2", "h3",
+      "h4", "h5", "h6", "hr", "li", "ol", "p", "pre", "strong",
+      "sub", "sup", "table", "tbody", "td", "th", "thead", "tr", "ul",
+    ],
+    ALLOWED_ATTR: ["href", "rel", "target", "title"],
+    FORBID_TAGS: ["font", "style"],
+    FORBID_ATTR: [
+      "style", "class", "id", "align", "color", "face", "size",
+      "width", "height", "bgcolor",
+    ],
+  });
 }
 
 function _activateKaTeX(element) {
@@ -70,6 +107,17 @@ function _activateKaTeX(element) {
       // NOTE: $...$ intentionally omitted from KaTeX — converted to \(...\) in _stashFormulas
     ],
     throwOnError: false,
+    errorColor: "#1a1a1a",
+  });
+  _downgradeKaTeXErrors(element);
+}
+
+function _downgradeKaTeXErrors(element) {
+  if (!element || !element.querySelectorAll) return;
+  element.querySelectorAll(".katex-error").forEach(function (node) {
+    var code = document.createElement("code");
+    code.textContent = node.textContent || "";
+    node.replaceWith(code);
   });
 }
 
