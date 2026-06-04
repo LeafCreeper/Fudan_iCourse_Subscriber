@@ -579,7 +579,7 @@ document.addEventListener("alpine:init", () => {
         return;
       }
       var markdown = this._buildSelectedMarkdown(selected);
-      var blob = new Blob([markdown], { type: "text/markdown;charset=utf-8" });
+      var blob = new Blob([markdown], { type: "text/plain;charset=utf-8" });
       var url = URL.createObjectURL(blob);
       var a = document.createElement("a");
       a.href = url;
