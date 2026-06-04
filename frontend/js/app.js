@@ -111,6 +111,19 @@ async function _v3Decrypt(path, signal) {
  * flight and dedicates the pipe to the opened course; loads dedupe by key. */
 var _PRIO = { DETAIL: 100, PPT: 90, FOCUS_PRELOAD: 10, BG_PRELOAD: 1 };
 
+/* Scheduler group for the catalog shard — a non-course group so focusing it
+ * aborts in-flight course loads and dedicates the pipe to the catalog. */
+var _CATALOG_GROUP = "__catalog__";
+
+function _loadCatalogShard(priority) {
+  return ICS.scheduler.enqueue({
+    key: "catalog",
+    group: _CATALOG_GROUP,
+    priority: priority,
+    run: function (signal) { return _v3Decrypt("catalog.enc", signal); },
+  });
+}
+
 function _loadLecture(subId, courseId, priority) {
   return ICS.db.loadLectureContent(subId, function (id) {
     return ICS.scheduler.enqueue({
@@ -167,6 +180,7 @@ document.addEventListener("alpine:init", () => {
     singleRunTriggering: false,
     starred: _loadStarred(),
     _catalogLoaded: false,
+    catalogLoading: false,
 
     async init() {
       const detected = ICS.github.detectRepo();
@@ -262,8 +276,13 @@ document.addEventListener("alpine:init", () => {
         }
         this.detailView = "summary";
       }
+      else if (view === "subscriptions") {
+        // Dedicate the pipe to the catalog: focusing this non-course group
+        // aborts any in-flight course loads so the catalog fetches first.
+        ICS.scheduler.focus(_CATALOG_GROUP);
+      }
       else {
-        // settings / subscriptions / search — release the focused course
+        // settings / search — release the focused course
         ICS.scheduler.blur();
       }
       this.view = view;
@@ -448,19 +467,17 @@ document.addEventListener("alpine:init", () => {
         return;
       }
 
-      // Load catalog on demand
+      // Load catalog on demand (focused above so it preempts course loads)
       if (!this._catalogLoaded) {
+        this.catalogLoading = true;
         try {
-          var catalogData = await ICS.scheduler.enqueue({
-            key: "catalog",
-            group: null,
-            priority: _PRIO.DETAIL,
-            run: function (signal) { return _v3Decrypt("catalog.enc", signal); },
-          });
+          var catalogData = await _loadCatalogShard(_PRIO.DETAIL);
           ICS.db.loadCatalog(catalogData);
           this._catalogLoaded = true;
         } catch (e) {
           console.warn("Failed to load catalog:", e);
+        } finally {
+          this.catalogLoading = false;
         }
       }
 
@@ -688,14 +705,11 @@ document.addEventListener("alpine:init", () => {
         }
         _loadPpt(cid, _PRIO.BG_PRELOAD).catch(function () {});
       }
-      // Catalog (lowest priority, not tied to any course)
+      // Catalog (lowest priority; same group/key as the focused load so the
+      // two dedupe — opening Subscriptions promotes this very task).
       if (!this._catalogLoaded) {
-        ICS.scheduler.enqueue({
-          key: "catalog",
-          group: null,
-          priority: 0,
-          run: function (signal) { return _v3Decrypt("catalog.enc", signal); },
-        }).then((data) => { ICS.db.loadCatalog(data); this._catalogLoaded = true; })
+        _loadCatalogShard(_PRIO.BG_PRELOAD)
+          .then((data) => { ICS.db.loadCatalog(data); this._catalogLoaded = true; })
           .catch(function () {});
       }
     },
