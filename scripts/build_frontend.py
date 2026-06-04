@@ -293,11 +293,14 @@ def build(data_dir: str, output_dir: str):
         _encrypt_and_write(catalog_json, master_key, "catalog", catalog_path)
         print(f"  catalog.enc ({os.path.getsize(catalog_path)} bytes) - {len(catalog_rows)} courses")
 
-    # 6) Copy frontend static files
+    # 6) Copy frontend static files (skip dev-only test scaffolding)
     frontend_dir = os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "frontend"
     )
+    _skip = {"test", "package.json"}
     for item in os.listdir(frontend_dir):
+        if item in _skip:
+            continue
         src = os.path.join(frontend_dir, item)
         dst = os.path.join(output_dir, item)
         if os.path.isdir(src):
