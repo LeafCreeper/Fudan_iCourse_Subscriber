@@ -25,12 +25,22 @@ var _inFlight = new Set();  // running tasks
 var _byKey = {};            // key -> task (pending or in-flight; for de-dup)
 var _focused = null;        // focused group (course_id) or null
 
+/**
+ * Count running tasks belonging to a specific group.
+ * @param {string|null} group - The group identifier (course_id)
+ * @returns {number} Number of in-flight tasks in the group
+ */
 function _inflightGroupCount(group) {
   var n = 0;
   _inFlight.forEach(function (t) { if (t.group === group) n++; });
   return n;
 }
 
+/**
+ * Select the next task to run from the queue.
+ * Prioritizes focused group tasks, then picks highest priority within the pool.
+ * @returns {Object|null} Task object or null if queue is empty or focused group has in-flight tasks
+ */
 function _pickNext() {
   if (!_queue.length) return null;
   var pool = _queue;
@@ -50,6 +60,10 @@ function _pickNext() {
   return best;
 }
 
+/**
+ * Pump: start pending tasks up to the concurrency limit.
+ * Called after a task completes or when focus/concurrency changes.
+ */
 function _pump() {
   while (_inFlight.size < _CONCURRENCY) {
     var task = _pickNext();
@@ -58,6 +72,11 @@ function _pump() {
   }
 }
 
+/**
+ * Start a task: create an AbortController, add to in-flight set, and invoke task.fn with the signal.
+ * On resolution: remove from tracking and resolve the promise; on abortion: re-queue the task.
+ * @param {Object} task - Task object with fn, key, group, priority, promise, _resolve, _reject
+ */
 function _start(task) {
   task.controller = new AbortController();
   task._aborted = false;
@@ -86,6 +105,16 @@ function _start(task) {
   );
 }
 
+/**
+ * Enqueue a task or upgrade an existing one if already pending/in-flight.
+ * De-duplicates by key: same key returns the existing promise.
+ * @param {Object} opts - Task options
+ * @param {string} opts.key - Unique identifier for de-duplication
+ * @param {string|number|null} opts.group - Group identifier (course_id)
+ * @param {number} opts.priority - Priority value (higher runs first)
+ * @param {Function} opts.run - Async function receiving (signal) and returning a promise
+ * @returns {Promise} Promise that resolves when the task completes
+ */
 function _enqueue(opts) {
   var existing = _byKey[opts.key];
   if (existing) {
@@ -113,6 +142,11 @@ function _enqueue(opts) {
   return task.promise;
 }
 
+/**
+ * Set focus to a specific group (course_id).
+ * Aborts all in-flight tasks from other groups and reserves free slots for the focused group.
+ * @param {string|number|null} group - Group identifier or null to clear focus
+ */
 function _focus(group) {
   group = group == null ? null : String(group);
   if (_focused === group) { _pump(); return; }
@@ -128,13 +162,24 @@ function _focus(group) {
   _pump();
 }
 
+/**
+ * Clear focus, resuming background preloading.
+ */
 function _blur() { _focus(null); }
 
+/**
+ * Set the maximum number of concurrent tasks.
+ * @param {number} n - Concurrency limit (clamped to at least 1)
+ */
 function _setConcurrency(n) {
   _CONCURRENCY = Math.max(1, n | 0);
   _pump();
 }
 
+/**
+ * Reset the scheduler: discard all pending and in-flight tasks, clear state.
+ * All pending promises are rejected with "scheduler reset".
+ */
 function _reset() {
   var all = _queue.slice();
   _inFlight.forEach(function (t) { all.push(t); });
