@@ -363,9 +363,20 @@ document.addEventListener("alpine:init", () => {
           if (known) { this._go("lectures", { courseId: route.courseId }); }
           else { this._go("courses"); this._selfHashWrite = true; location.hash = "#/courses"; }
         } else if (route.view === "detail") {
-          // Unknown lecture (data changed) → fall back to the list.
-          if (ICS.db.getLecture(route.subId)) { this._go("detail", { subId: route.subId }); }
-          else { this._go("courses"); this._selfHashWrite = true; location.hash = "#/courses"; }
+          var skel = ICS.db.getLecture(route.subId);
+          if (!skel) {
+            this._go("courses"); this._selfHashWrite = true; location.hash = "#/courses";
+          } else {
+            var cid = route.courseId || skel.course_id;
+            this._go("detail", { subId: route.subId, courseId: cid });
+            if (!route.courseId) {
+              var newHash = ICS.routing.hashFor("detail", cid, route.subId);
+              if (newHash && location.hash !== newHash) {
+                this._selfHashWrite = true;
+                history.replaceState(null, "", newHash);
+              }
+            }
+          }
         } else {
           this._go(route.view || "courses", {});
         }
