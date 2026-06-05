@@ -181,55 +181,46 @@
   <!-- ─── SETUP WIZARD ─── -->
   <div x-show="view === 'setup'" class="max-w-md mx-auto p-6 mt-8">
     <h2 class="text-xl font-bold text-gray-800 mb-1">iCourse Subscriber</h2>
-    <p class="text-sm text-gray-500 mb-6">Enter your credentials to connect to your encrypted database.</p>
+    <p class="text-sm text-gray-500 mb-6">输入你的复旦凭据以解密课程数据。</p>
 
     <div class="space-y-4">
-      <!-- Repo info -->
-      <div class="grid grid-cols-2 gap-3">
-        <div>
-          <label class="block text-xs text-gray-500 mb-1">Repo Owner</label>
-          <input x-model="repoOwner" type="text" placeholder="username"
-                 class="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-300 focus:outline-none">
-        </div>
-        <div>
-          <label class="block text-xs text-gray-500 mb-1">Repo Name</label>
-          <input x-model="repoName" type="text" placeholder="Fudan_iCourse_Subscriber"
-                 class="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-300 focus:outline-none">
-        </div>
-      </div>
-
-      <!-- GitHub PAT -->
+      <!-- Credentials (required) -->
       <div>
-        <label class="block text-xs text-gray-500 mb-1">
-          GitHub Fine-grained PAT
-          <a href="https://github.com/settings/personal-access-tokens/new" target="_blank"
-             class="text-blue-500 underline ml-1">Create</a>
-        </label>
-        <input x-model="setup.token" type="password" placeholder="github_pat_..."
-               class="w-full border rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-blue-300 focus:outline-none">
-        <p class="text-xs text-gray-400 mt-1">Scope: this repo only, Contents: Read and Write</p>
-      </div>
-
-      <!-- 4 Secrets -->
-      <div>
-        <label class="block text-xs text-gray-500 mb-1">STUID (Student ID)</label>
+        <label class="block text-xs text-gray-500 mb-1">STUID (学号)</label>
         <input x-model="setup.stuid" type="text" placeholder="22307110xxx"
                class="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-300 focus:outline-none">
       </div>
       <div>
-        <label class="block text-xs text-gray-500 mb-1">UISPSW (UIS Password)</label>
+        <label class="block text-xs text-gray-500 mb-1">UISPSW (UIS 密码)</label>
         <input x-model="setup.uispsw" type="password"
                class="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-300 focus:outline-none">
       </div>
 
-      <!-- Advanced -->
+      <!-- Advanced (optional) -->
       <details class="text-sm">
-        <summary class="text-gray-400 cursor-pointer">Advanced</summary>
-        <div class="mt-2">
+        <summary class="text-gray-400 cursor-pointer">高级设置（订阅管理/触发运行需要）</summary>
+        <div class="mt-2 space-y-3">
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-xs text-gray-500 mb-1">Repo Owner</label>
+              <input x-model="repoOwner" type="text" placeholder="username"
+                     class="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-300 focus:outline-none">
+            </div>
+            <div>
+              <label class="block text-xs text-gray-500 mb-1">Repo Name</label>
+              <input x-model="repoName" type="text" placeholder="Fudan_iCourse_Subscriber"
+                     class="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-300 focus:outline-none">
+            </div>
+          </div>
           <div>
-            <label class="block text-xs text-gray-500 mb-1">Data Branch</label>
-            <input x-model="dataBranch" type="text"
-                   class="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-300 focus:outline-none">
+            <label class="block text-xs text-gray-500 mb-1">
+              GitHub Fine-grained PAT
+              <a href="https://github.com/settings/personal-access-tokens/new" target="_blank"
+                 class="text-blue-500 underline ml-1">Create</a>
+            </label>
+            <input x-model="setup.token" type="password" placeholder="github_pat_... (可选)"
+                   class="w-full border rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-blue-300 focus:outline-none">
+            <p class="text-xs text-gray-400 mt-1">仅订阅管理和触发运行需要。Scope: Contents + Secrets + Actions</p>
           </div>
         </div>
       </details>
@@ -241,7 +232,7 @@
       <button @click="testAndSave()" :disabled="setupTesting"
               class="w-full bg-blue-500 text-white py-2.5 rounded-lg font-medium hover:bg-blue-600 disabled:opacity-50 flex items-center justify-center gap-2">
         <div x-show="setupTesting" class="spinner !w-4 !h-4 !border-2 !border-white/30 !border-t-white"></div>
-        <span x-text="setupTesting ? 'Testing connection…' : 'Connect'"></span>
+        <span x-text="setupTesting ? '验证中…' : '连接'"></span>
       </button>
     </div>
   </div>
@@ -480,13 +471,13 @@
           <div class="flex items-center justify-between gap-2">
             <p class="text-xs text-blue-600 font-medium truncate" x-text="r.course_title"></p>
             <span class="text-[10px] uppercase tracking-wide text-gray-400 flex-shrink-0"
-              x-text="r.hit_field === 'transcript' ? '转录命中'
-                : r.hit_field === 'sub_title'  ? '标题命中'
-                : r.hit_field === 'ocr'        ? 'OCR命中'
-                : '摘要命中'"></span>
+                  x-text="r.hit_field === 'transcript' ? '转录命中'
+                        : r.hit_field === 'sub_title'  ? '标题命中'
+                        : r.hit_field === 'ocr'        ? 'OCR命中'
+                        : '摘要命中'"></span>
           </div>
           <h4 class="font-medium text-gray-800 text-sm mt-0.5" x-text="r.sub_title || 'Untitled'"></h4>
-           <p class="text-xs text-gray-400 mt-1 line-clamp-2"
+          <p class="text-xs text-gray-400 mt-1 line-clamp-2"
              x-html="highlight(r.hit_field === 'transcript' ? r.transcript
                     : r.hit_field === 'ocr' ? r.ppt_text
                     : r.summary, searchQuery)"></p>
@@ -743,10 +734,6 @@
           <input x-model="repoName" type="text" class="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-300 focus:outline-none">
         </div>
       </div>
-      <div>
-        <label class="block text-xs text-gray-500 mb-1">Data Branch</label>
-        <input x-model="dataBranch" type="text" class="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-300 focus:outline-none">
-      </div>
     </div>
 
     <button @click="saveSettingsAndReload()"
@@ -834,8 +821,6 @@
 <!-- ╔══════════════════════════════════════╗
      ║  CDN SCRIPTS                         ║
      ╚══════════════════════════════════════╝ -->
-<!-- sql.js (provides window.initSqlJs) -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.12.0/sql-wasm.js"></script>
 <!-- marked.js (provides window.marked) -->
 <script src="https://cdn.jsdelivr.net/npm/marked@15/marked.min.js"></script>
 <!-- DOMPurify (provides window.DOMPurify) -->
@@ -851,7 +836,7 @@
 <!-- App scripts (defer, in order, before Alpine) -->
 <script defer src="js/crypto.js"></script>
 <script defer src="js/github.js"></script>
-<script defer src="js/schema.js"></script>
+<script defer src="js/scheduler.js"></script>
 <script defer src="js/db.js"></script>
 <script defer src="js/render.js"></script>
 <script defer src="js/app.js"></script>

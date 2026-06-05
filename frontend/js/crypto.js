@@ -146,13 +146,84 @@ async function _icsDecryptWithFallback(encryptedBytes, secrets, validate) {
   return { data: ptLegacy, version: "legacy" };
 }
 
+/* ── V3: HKDF-based encryption (master key derived once) ───────────────
+ *
+ * V3 envelope:
+ *   Bytes  0-7:  "ICSv3\x00\x00\x00"  (magic)
+ *   Bytes  8-39: SHA-256(file_id)      (32 bytes, used as HKDF info)
+ *   Bytes 40+:   AES-256-CBC ciphertext (PKCS7 padded)
+ *
+ * Key derivation:
+ *   1. PBKDF2(password, fixed_salt, 100000) -> 32-byte master_key
+ *   2. HKDF(master_key, info=bytes[8:40], salt="") -> 48 bytes
+ *      first 32 = AES key, last 16 = IV
+ */
+
+var V3_MAGIC = "ICSv3\x00\x00\x00";
+var V3_MAGIC_LEN = 8;
+var V3_INFO_LEN = 32;
+var V3_HEADER_LEN = V3_MAGIC_LEN + V3_INFO_LEN; // 40
+
+async function _icsBuildPasswordV3(secrets) {
+  return await _sha256Hex("ICSv3:" + secrets.stuid + ":" + secrets.uispsw);
+}
+
+async function _icsDeriveV3MasterKey(password, saltHex, iterations) {
+  _checkWebCrypto();
+  var salt = new Uint8Array(saltHex.match(/.{2}/g).map(function(b) { return parseInt(b, 16); }));
+  var enc = new TextEncoder();
+  var baseKey = await window.crypto.subtle.importKey(
+    "raw", enc.encode(password), "PBKDF2", false, ["deriveBits"]
+  );
+  var masterBits = await window.crypto.subtle.deriveBits(
+    { name: "PBKDF2", salt: salt, iterations: iterations, hash: "SHA-256" },
+    baseKey, 256
+  );
+  // Import the 32-byte master key as HKDF key material
+  return await window.crypto.subtle.importKey(
+    "raw", masterBits, "HKDF", false, ["deriveBits"]
+  );
+}
+
+async function _icsHkdfDecrypt(encryptedBytes, masterKey) {
+  _checkWebCrypto();
+  if (encryptedBytes.length < V3_HEADER_LEN + 16) {
+    throw new Error("V3 blob too short");
+  }
+  // Verify magic
+  var magic = new TextDecoder().decode(encryptedBytes.slice(0, V3_MAGIC_LEN));
+  if (magic !== V3_MAGIC) {
+    throw new Error("Not a V3 encrypted file (bad magic)");
+  }
+  // Extract info (file_id hash) and ciphertext
+  var info = encryptedBytes.slice(V3_MAGIC_LEN, V3_HEADER_LEN);
+  var ciphertext = encryptedBytes.slice(V3_HEADER_LEN);
+  // HKDF derive 48 bytes (32 key + 16 IV)
+  var derived = await window.crypto.subtle.deriveBits(
+    { name: "HKDF", hash: "SHA-256", salt: new Uint8Array(0), info: info },
+    masterKey, 384
+  );
+  var keyBytes = derived.slice(0, 32);
+  var iv = new Uint8Array(derived.slice(32, 48));
+  var aesKey = await window.crypto.subtle.importKey(
+    "raw", keyBytes, { name: "AES-CBC" }, false, ["decrypt"]
+  );
+  var plainBuffer = await window.crypto.subtle.decrypt(
+    { name: "AES-CBC", iv: iv }, aesKey, ciphertext
+  );
+  return new Uint8Array(plainBuffer);
+}
+
 window.ICS.crypto = {
   decrypt: _icsDecrypt,
   encrypt: _icsEncrypt,
   buildPassword: _icsBuildPasswordV2,
   buildPasswordV2: _icsBuildPasswordV2,
+  buildPasswordV3: _icsBuildPasswordV3,
   buildPasswordLegacy: _icsBuildPasswordLegacy,
   decryptWithFallback: _icsDecryptWithFallback,
+  deriveV3MasterKey: _icsDeriveV3MasterKey,
+  hkdfDecrypt: _icsHkdfDecrypt,
   isSqlite: _icsIsSqlite,
   isGzip: _icsIsGzip,
   isJsonObj: _icsIsJsonObj,

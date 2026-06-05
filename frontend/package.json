@@ -1,0 +1,8 @@
+{
+  "name": "icourse-frontend",
+  "private": true,
+  "description": "Frontend logic tests (Node built-in runner, zero dependencies)",
+  "scripts": {
+    "test": "node --test \"test/**/*.test.mjs\""
+  }
+}
