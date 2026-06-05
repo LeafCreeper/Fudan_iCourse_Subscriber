@@ -310,8 +310,15 @@ document.addEventListener("alpine:init", () => {
         // aborts any in-flight course loads so the catalog fetches first.
         ICS.scheduler.focus(_CATALOG_GROUP);
       }
+      else if (view === "search") {
+        // The search filter doubles as a focus selector: when courses are
+        // picked, dedicate the pipe to them (abort other-course fetches) so
+        // their summaries/transcripts become searchable first. No selection
+        // ("全部课程") means search everything, so keep preloading all.
+        this._applySearchFocus();
+      }
       else {
-        // settings / search — release the focused course
+        // settings — release the focused course
         ICS.scheduler.blur();
       }
       this.view = view;
@@ -321,9 +328,7 @@ document.addEventListener("alpine:init", () => {
       if (!this._applyingHash) {
         var courseId = (view === "lectures") ? params.courseId
           : (this.currentCourse ? this.currentCourse.course_id : null);
-        var subId = (view === "detail")
-          ? params.subId
-          : (this.currentLecture ? this.currentLecture.sub_id : null);
+        var subId = (view === "detail") ? params.subId : null;
         var h = ICS.routing.hashFor(view, courseId, subId);
         if (h && location.hash !== h) { this._selfHashWrite = true; location.hash = h; }
       }
@@ -461,7 +466,22 @@ document.addEventListener("alpine:init", () => {
       var s = new Set(this.searchSelectedCourseIds.map(String));
       if (checked) s.add(cid); else s.delete(cid);
       this.searchSelectedCourseIds = Array.from(s);
+      // Treat the search filter as focus: dedicate the download pipe to the
+      // selected courses (or release it when the selection is cleared) so
+      // their shards load ahead of the background sweep.
+      this._applySearchFocus();
       this.doSearch();
+    },
+    // Drive the scheduler from the search course filter. Selected courses →
+    // focus that set (abort other-course fetches); empty selection → blur so
+    // the global preload of every course resumes. Only meaningful while the
+    // search view is active; navigating away re-focuses via _go.
+    _applySearchFocus() {
+      if (this.searchSelectedCourseIds.length) {
+        ICS.scheduler.focus(this.searchSelectedCourseIds.map(String));
+      } else {
+        ICS.scheduler.blur();
+      }
     },
     async doSearch() {
       clearTimeout(this._searchTimeout);
