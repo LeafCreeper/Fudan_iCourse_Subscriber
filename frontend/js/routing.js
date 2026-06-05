@@ -45,23 +45,23 @@ function _parseHash(hash) {
 
   // 新格式：#/course/<cid> 或 #/course/<cid>/<sid>
   if (head === "course") {
-    var cid = parts[1] ? decodeURIComponent(parts[1]) : null;
+    const cid = parts[1] ? decodeURIComponent(parts[1]) : null;
     if (!cid) return { view: "courses" };
-    var sid = parts[2] ? decodeURIComponent(parts[2]) : null;
+    const sid = parts[2] ? decodeURIComponent(parts[2]) : null;
     if (sid) return { view: "detail", courseId: cid, subId: sid };
     return { view: "lectures", courseId: cid };
   }
 
   // 向后兼容旧格式
   if (head === "lectures") {
-    var cid2 = parts[1] ? decodeURIComponent(parts[1]) : null;
-    if (!cid2) return { view: "courses" };
-    return { view: "lectures", courseId: cid2 };
+    const cid = parts[1] ? decodeURIComponent(parts[1]) : null;
+    if (!cid) return { view: "courses" };
+    return { view: "lectures", courseId: cid };
   }
   if (head === "detail") {
-    var sid2 = parts[1] ? decodeURIComponent(parts[1]) : null;
-    if (!sid2) return { view: "courses" };
-    return { view: "detail", courseId: null, subId: sid2 };
+    const sid = parts[1] ? decodeURIComponent(parts[1]) : null;
+    if (!sid) return { view: "courses" };
+    return { view: "detail", courseId: null, subId: sid };
   }
 
   if (head === "search" || head === "subscriptions" || head === "settings") {
