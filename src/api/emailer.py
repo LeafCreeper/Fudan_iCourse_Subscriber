@@ -153,6 +153,47 @@ def _prefetch_latex_images(urls: list[str], dpi: int = 300) -> None:
             future.result()  # trigger any exception logging inside _fetch_latex_image
 
 
+_LIST_LINE_RE = re.compile(r"^\s{0,3}([-*+]|\d+\.)\s+\S")
+
+
+def _ensure_list_blank_lines(text: str) -> str:
+    """Insert a blank line before a list that directly follows body text.
+
+    python-markdown (with sane_lists) only recognises a list as a block when
+    it is preceded by a blank line. LLM summaries almost always write an
+    introductory sentence immediately followed by ``- item``, so the list was
+    rendered as a single ``<p>`` whose newlines ``nl2br`` turned into ``<br>``
+    instead of ``<ul>``/``<ol>``.
+
+    Only the first item of such a run gets a separating blank line (the rest
+    stay tight). Fenced code blocks (``` / ~~~) are skipped so a ``- `` inside
+    a code fence is not mistaken for a list.
+    """
+    out: list[str] = []
+    in_fence = False
+    fence = ""
+    for line in text.split("\n"):
+        stripped = line.strip()
+        if not in_fence:
+            if stripped.startswith("```") or stripped.startswith("~~~"):
+                in_fence = True
+                fence = stripped[:3]
+                out.append(line)
+                continue
+        else:
+            if stripped.startswith(fence):
+                in_fence = False
+                fence = ""
+            out.append(line)
+            continue
+        if _LIST_LINE_RE.match(line):
+            prev = out[-1] if out else ""
+            if prev.strip() != "" and not _LIST_LINE_RE.match(prev):
+                out.append("")
+        out.append(line)
+    return "\n".join(out)
+
+
 def _md_to_html(md_text: str, cid_images: dict | None = None) -> str:
     """Convert Markdown to styled HTML, rendering LaTeX math as images.
 
@@ -201,6 +242,13 @@ def _md_to_html(md_text: str, cid_images: dict | None = None) -> str:
     text = re.sub(r"(?<!\$)\$(?!\$)(.+?)(?<!\$)\$(?!\$)", _stash, text)
     # 4) \(...\) inline formulas (normalize to $...$)
     text = re.sub(r"\\\((.+?)\\\)", _stash_inline, text)
+
+    # python-markdown (sane_lists) only treats a list as a block when it is
+    # preceded by a blank line. LLM summaries almost always run an intro
+    # sentence straight into "- item", which rendered as one <p> of <br>
+    # lines. Fix the structure before markdown runs (and before body escape,
+    # which is content-level and independent of this).
+    text = _ensure_list_blank_lines(text)
 
     # Escape bare <,>,& in the body before markdown sees it. python-markdown
     # only escapes a "<" that can't start a tag, so "<v,w>" / "List<T>"
