@@ -202,6 +202,15 @@ def _md_to_html(md_text: str, cid_images: dict | None = None) -> str:
     # 4) \(...\) inline formulas (normalize to $...$)
     text = re.sub(r"\\\((.+?)\\\)", _stash_inline, text)
 
+    # Escape bare <,>,& in the body before markdown sees it. python-markdown
+    # only escapes a "<" that can't start a tag, so "<v,w>" / "List<T>"
+    # (angle-bracket notation common in math & CS notes) passes through as raw
+    # HTML and corrupts the render. Formulas are already stashed into NUL
+    # placeholders, so their <,>,& survive untouched; markdown's own emitted
+    # tags (<ul>, <strong> …) are produced after this step and aren't affected.
+    # quote=False — body text never lands inside an attribute here.
+    text = escape(text, quote=False)
+
     html = markdown.markdown(
         text,
         extensions=_MD_EXTENSIONS,
