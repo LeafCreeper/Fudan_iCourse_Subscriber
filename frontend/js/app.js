@@ -102,17 +102,38 @@ function _relativeTime(iso) {
   return new Date(iso).toLocaleDateString();
 }
 
+function _htmlEscape(s) {
+  // Result of _highlightSnippet is injected via x-html, so the snippet — which
+  // is plain text, not HTML — must be escaped first. plainSnippet strips
+  // markdown but does NOT touch <,>,&, so a stray "<v,w>" or "a < b" in a
+  // summary would otherwise be parsed as a tag by the browser.
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
 function _highlightSnippet(text, query, radius) {
   radius = radius || 60;
   if (!text || !query) return "";
   const plain = ICS.render.plainSnippet(text, 99999);
+  // Slice on the raw plain text first: at this point <,>,& are still single
+  // characters, so the radius cut can never split an entity in half. Then
+  // HTML-escape the whole snippet, then wrap matches in <mark>.
   const idx = plain.toLowerCase().indexOf(query.toLowerCase());
-  if (idx === -1) return plain.slice(0, 120) + "...";
-  const s = Math.max(0, idx - radius);
-  const e = Math.min(plain.length, idx + query.length + radius);
-  let snip = (s > 0 ? "..." : "") + plain.slice(s, e) + (e < plain.length ? "..." : "");
-  const re = new RegExp("(" + query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ")", "gi");
-  return snip.replace(re, "<mark>$1</mark>");
+  let snip;
+  if (idx === -1) {
+    // No-hit branch still flows through x-html, so it must be escaped too.
+    snip = plain.slice(0, 120);
+  } else {
+    const s = Math.max(0, idx - radius);
+    const e = Math.min(plain.length, idx + query.length + radius);
+    snip = (s > 0 ? "..." : "") + plain.slice(s, e) + (e < plain.length ? "..." : "");
+  }
+  const esc = _htmlEscape(snip);
+  // Escape the query the same way so the two stay aligned: SQL LIKE matched on
+  // the raw summary, but we now highlight inside the escaped snippet, so a
+  // query like "a < b" must become "a &lt; b" to be found there.
+  const escQuery = _htmlEscape(query);
+  const re = new RegExp("(" + escQuery.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ")", "gi");
+  return esc.replace(re, "<mark>$1</mark>");
 }
 
 function _formatTimestamp(seconds) {
