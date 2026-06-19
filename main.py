@@ -28,6 +28,7 @@ from src.runtime.scheduler import Scheduler
 from src.ai.summarizer import Summarizer
 from src.ai.transcriber import Transcriber
 from src.api.webvpn import WebVPNSession
+from src.ai import bucketer
 
 
 def login_with_retry(max_attempts: int = 5) -> WebVPNSession:
@@ -187,6 +188,47 @@ def _drive_lectures(client: ICourseClient, db: Database,
             scheduler.audio_downloader.release(sub_id)
 
 
+def _repair_suspect_summaries(db: Database, summarizer: Summarizer,
+                              reporter: Reporter) -> None:
+    """Regenerate processed lectures whose summaries are clearly incomplete."""
+    suspect = db.get_suspect_short_summaries()
+    if not suspect:
+        return
+
+    reporter.info(
+        f"\n[Repair] Found {len(suspect)} processed lecture(s) with "
+        "suspiciously short summaries."
+    )
+    for row in suspect:
+        sub_id = row["sub_id"]
+        title = row.get("course_title") or row.get("sub_title") or sub_id
+        old_len = len((row.get("summary") or "").strip())
+        transcript = row.get("transcript") or ""
+        try:
+            pages = db.get_done_ppt_pages(sub_id)
+            prompt_text, mode = bucketer.assemble(
+                transcript, None, pages,
+            )
+            reporter.info(
+                f"  [Repair] Re-summarizing {row.get('sub_title', sub_id)} "
+                f"(old={old_len} chars, prompt={len(prompt_text)} chars, "
+                f"mode={mode})"
+            )
+            summary, model_used = summarizer.summarize(title, prompt_text)
+            db.update_summary(sub_id, summary, model_used)
+            db.reset_emailed(sub_id)
+            db.clear_error(sub_id)
+            reporter.info(
+                f"  [Repair] Updated by {model_used}: "
+                f"{len(summary)} chars"
+            )
+        except Exception as e:
+            reporter.info(
+                f"  [Repair] Failed {sub_id}: {type(e).__name__}: {e}"
+            )
+            db.update_error(sub_id, "repair_summary", str(e))
+
+
 def _send_email(emailer: Emailer | None, db: Database, reporter: Reporter,
                 email_items: list) -> None:
     """Append any previously-processed-but-unsent lectures, then send."""
@@ -315,6 +357,7 @@ def run():
             client, db, scheduler, transcriber, summarizer, reporter,
             all_lectures, email_items,
         )
+        _repair_suspect_summaries(db, summarizer, reporter)
 
     finally:
         scheduler.shutdown()

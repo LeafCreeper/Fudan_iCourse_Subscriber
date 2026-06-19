@@ -399,6 +399,36 @@ class Database:
         ).fetchall()
         return [dict(row) for row in rows]
 
+    def get_suspect_short_summaries(
+        self,
+        course_id: str | None = None,
+        min_transcript_chars: int = 8000,
+        min_summary_chars: int = 1200,
+    ) -> list[dict]:
+        """Return processed lectures whose saved summary is implausibly short.
+
+        A prior run can leave a "successful" summary that only contains
+        course reminders if the LLM stops early. Since processed lectures are
+        skipped on later runs, these rows need an explicit repair path.
+        """
+        query = (
+            """SELECT l.*, c.title AS course_title, c.teacher
+               FROM lectures l
+               JOIN courses c ON l.course_id = c.course_id
+               WHERE l.processed_at IS NOT NULL
+                 AND l.transcript IS NOT NULL
+                 AND length(trim(l.transcript)) >= ?
+                 AND l.summary IS NOT NULL
+                 AND length(trim(l.summary)) < ?"""
+        )
+        params: list = [min_transcript_chars, min_summary_chars]
+        if course_id:
+            query += " AND l.course_id = ?"
+            params.append(course_id)
+        query += " ORDER BY l.processed_at DESC"
+        rows = self.conn.execute(query, params).fetchall()
+        return [dict(row) for row in rows]
+
     def sync_dates_from_sub(self) -> int:
         """Fix existing date rows where sub_title date differs from date column.
 
