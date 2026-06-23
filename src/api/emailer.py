@@ -2,6 +2,7 @@ import re
 import smtplib
 import time
 import uuid
+from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
 from io import BytesIO
@@ -406,6 +407,41 @@ class Emailer:
 
         if cid_images:
             print(f"[Emailer] Embedded {len(cid_images)} LaTeX images as CID")
+
+        # Build Markdown attachment with raw LaTeX formulas (no image rendering)
+        total_lectures = sum(len(lectures) for lectures in courses.values())
+        now = datetime.now()
+        md_sections = [
+            "---",
+            "title: iCourse 课程摘要",
+            f"generated: {now.isoformat()}",
+            f"courses: {len(courses)}",
+            f"lectures: {total_lectures}",
+            "---",
+            "",
+        ]
+        for course_title, lectures in courses.items():
+            md_sections.append(f"# {course_title}")
+            md_sections.append("")
+            for lec in lectures:
+                tag = " [更新]" if lec.get("is_update") else ""
+                lec_title = f"{lec['sub_title']} ({lec['date']})"
+                if tag:
+                    lec_title += tag
+                md_sections.append(f"## {lec_title}")
+                md_sections.append("")
+                md_sections.append(lec["summary"])
+                md_sections.append("")
+            md_sections.append("---")
+            md_sections.append("")
+
+        md_content = "\n".join(md_sections).strip() + "\n"
+        md_attachment = MIMEText(md_content, "markdown", "utf-8")
+        md_attachment.add_header(
+            "Content-Disposition", "attachment",
+            filename=f"fics-summaries-{now.strftime('%Y-%m-%d')}.md",
+        )
+        msg.attach(md_attachment)
 
         # Retry with exponential backoff
         for attempt in range(3):
