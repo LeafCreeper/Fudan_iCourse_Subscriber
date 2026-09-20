@@ -1,0 +1,124 @@
+name: Repair Email State
+
+# 手动触发的数据库诊断/修复工作流：解决「讲座显示已处理但一直没收到邮件」。
+# CI 运行时直接用仓库 Secrets 里的 STUID/UISPSW 解密数据库，无需在本地
+# 或聊天中传递密码。
+#
+# 典型用法（全部在 GitHub 网页 Actions 页面完成）：
+#   1. action=diagnose, apply 不勾选 → 先只读诊断，看日志确认问题类型
+#   2. action=reset_processed 或 reset_emailed, apply 勾选 → 真正改库并推回
+#   3. 等当晚 19:36 的 iCourse Check（或手动 Single Run）发出邮件
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "动作：diagnose=只读诊断；reset_processed=清空处理标志重跑；reset_emailed=仅清发信标志重发"
+        required: true
+        default: diagnose
+        type: choice
+        options:
+          - diagnose
+          - reset_processed
+          - reset_emailed
+      target:
+        description: "定位方式：按课程 course_id（该课所有讲座）或按讲座 sub_id"
+        required: true
+        default: course
+        type: choice
+        options:
+          - course
+          - sub_id
+      ids:
+        description: "课程ID或讲座sub_id，多个用英文逗号分隔，只能含数字（如 39173 或 654112,654113）"
+        required: true
+        type: string
+      apply:
+        description: "勾选=真正写入并强制推送 data 分支；不勾选=只演练（DRY RUN），不改库"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+# 与 delete_course.yml 共用同一个并发组，避免与其它 data 分支写入互相覆盖。
+concurrency:
+  group: db-reset
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Fetch and reassemble database
+        env:
+          STUID: ${{ secrets.STUID }}
+          UISPSW: ${{ secrets.UISPSW }}
+        run: |
+          git fetch origin data --depth=1
+          mkdir -p data/sharded/shards
+          if git cat-file -e origin/data:data/icourse-index.enc 2>/dev/null; then
+            git show origin/data:data/icourse-index.enc > data/sharded/icourse-index.enc
+            shard_paths=$(git ls-tree -r --name-only origin/data | grep '^data/shards/' || true)
+            for path in $shard_paths; do
+              base=$(basename "$path")
+              git show "origin/data:$path" > "data/sharded/shards/$base"
+            done
+            python scripts/db_shard.py reassemble data/sharded data/icourse.db
+          else
+            echo "::error::No sharded database found on data branch."
+            exit 1
+          fi
+
+      - name: Diagnose / repair
+        env:
+          REPAIR_ACTION: ${{ inputs.action }}
+          REPAIR_TARGET: ${{ inputs.target }}
+          REPAIR_IDS: ${{ inputs.ids }}
+          REPAIR_APPLY: ${{ inputs.apply && '1' || '' }}
+        run: python scripts/repair_db.py data/icourse.db
+
+      - name: Re-shard and push
+        if: inputs.action != 'diagnose' && inputs.apply == true
+        env:
+          STUID: ${{ secrets.STUID }}
+          UISPSW: ${{ secrets.UISPSW }}
+          SUBSCRIBED_COURSE_IDS: ${{ secrets.COURSE_IDS }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # 不在本地与远程之间合并：本工作流只改标志位，先基于最新 data
+          # 重组（上一步已 fetch 最新），期间若有并发 run 写入，db-reset
+          # concurrency 组会与 delete_course 串行化。check.yml 部署时仍会
+          # 再做一次 merge，故不会丢数据。
+          rm -rf data/sharded_out
+          mkdir -p data/sharded_out
+          python scripts/db_shard.py shard data/icourse.db data/sharded_out
+
+          rm -rf /tmp/db_deploy
+          mkdir -p /tmp/db_deploy/data/shards
+          cp data/sharded_out/icourse-index.enc /tmp/db_deploy/data/
+          cp data/sharded_out/shards/*.db.gz.enc /tmp/db_deploy/data/shards/
+          cd /tmp/db_deploy
+
+          git init -q
+          git checkout -q -b data
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/
+          git commit -q -m "chore: repair ${{ inputs.action }} on ${{ inputs.target }} ${{ inputs.ids }}"
+          git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
+          git push --force origin data
