@@ -2,13 +2,23 @@ name: iCourse Check
 
 on:
   schedule:
-    # Every day at 19:36 BTC (UTC + 8)
-    # 设计这个奇怪的时间是为了避免整点时的github队列峰值，避免排队过久。
+    # 北京时间 19:36
     - cron: "36 11 * * *"
+
+    # 北京时间 21:36
+    - cron: "36 13 * * *"
+
+    # 北京时间 23:36
+    - cron: "36 15 * * *"
+
   workflow_dispatch:
 
 permissions:
   contents: write
+
+concurrency:
+  group: icourse-check
+  cancel-in-progress: false
 
 jobs:
   check:
