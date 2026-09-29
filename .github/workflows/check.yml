@@ -167,6 +167,7 @@ jobs:
           StuId: ${{ secrets.STUID }}
           UISPsw: ${{ secrets.UISPSW }}
           COURSE_IDS: ${{ secrets.COURSE_IDS }}
+          USE_OFFICIAL_TRANSCRIPT: "1"
           CRAWL_TERM: ${{ secrets.CRAWL_TERM }}
           SMTP_EMAIL: ${{ secrets.SMTP_EMAIL }}
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
