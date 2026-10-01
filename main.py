@@ -160,6 +160,7 @@ def _drive_lectures(client: ICourseClient, db: Database,
 
     runner = LectureRunner(
         client, db, scheduler, transcriber, summarizer, reporter,
+        ensure_session=lambda: _check_session(client),
     )
 
     first_course, _, first_lec = all_lectures[0]
@@ -172,8 +173,8 @@ def _drive_lectures(client: ICourseClient, db: Database,
             next_course, _, next_lec = all_lectures[i + 1]
             next_info = (next_course, str(next_lec["sub_id"]))
 
-        _check_session(client)
         try:
+            _check_session(client)
             summary = runner.run(
                 course_id, course_title, lecture, next_info=next_info,
             )
@@ -185,6 +186,10 @@ def _drive_lectures(client: ICourseClient, db: Database,
                     "date": lecture.get("date", ""),
                     "summary": summary,
                 })
+            else:
+                row = db.get_lecture(sub_id)
+                if row and row.get("error_stage") not in (None, "", "no_video"):
+                    reporter.lecture_error(sub_id)
         except Exception:
             reporter.lecture_error(sub_id)
             traceback.print_exc()
@@ -219,9 +224,22 @@ def _send_email(emailer: Emailer | None, db: Database, reporter: Reporter,
         reporter.email_summary(len(email_items))
         if emailer.send(email_items):
             db.mark_emailed_batch([item["sub_id"] for item in email_items])
+        elif emailer.last_error_code == 550 and len(email_items) > 1:
+            reporter.info("[Email] Digest rejected; isolating individual lectures.")
+            for item in email_items:
+                try:
+                    delivered = emailer.send([item])
+                except Exception:
+                    delivered = False
+                    traceback.print_exc()
+                if delivered:
+                    db.mark_emailed_batch([item["sub_id"]])
+                else:
+                    reporter.email_failed(item["sub_id"])
         else:
             reporter.email_failed()
     except Exception:
+        reporter.email_failed()
         reporter.info("[Email] Failed to send:")
         traceback.print_exc()
 
@@ -321,6 +339,7 @@ def run():
         # Crawl-only mode: nothing to process, just persist + exit.
         reporter.info("\n[Crawl-only mode] No COURSE_IDS — skipping lectures.")
         reporter.run_footer()
+        reporter.raise_if_failed()
         return
 
     scheduler = Scheduler(reporter=reporter)
@@ -337,6 +356,7 @@ def run():
 
     _send_email(emailer, db, reporter, email_items)
     reporter.run_footer()
+    reporter.raise_if_failed()
 
 
 if __name__ == "__main__":

@@ -38,6 +38,15 @@ BYTES_PER_SECOND = SAMPLE_RATE * BYTES_PER_SAMPLE
 SILENCE_GAP_THRESHOLD_SEC = 30 * 60  # 30 min of no speech → suspected cutoff
 
 
+def _safe_ffmpeg_stderr(data: bytes) -> str:
+    """Keep useful errors without exposing signed URLs or HTTP credentials."""
+    text = data.decode(errors="replace")
+    text = re.sub(r"https?://[^\s\"'<>]+", "[redacted URL]", text)
+    text = re.sub(r"(?im)^.*(?:cookie|authorization):[^\r\n]*",
+                  "[redacted header]", text)
+    return text[-2000:]
+
+
 # ── Shared resource meter state (network delta tracking) ──────────────────
 _rm_net_last: tuple[float, int, int] | None = None
 
@@ -488,20 +497,20 @@ class Transcriber:
         # -9/-15: SIGKILL/SIGTERM — the downloader's release() terminates
         # ffmpeg once we're done reading; neither is an ffmpeg failure.
         if rc not in (0, -9, -15, None):
-            stderr_text = stderr_output.decode(errors="replace")
+            stderr_text = _safe_ffmpeg_stderr(stderr_output)
             if "does not contain any stream" in stderr_text:
                 raise NoAudioStreamError(
                     f"ffmpeg found no audio stream (video-only file).\n"
                     f"stderr (last 500 chars):\n{stderr_text[-500:]}"
                 )
-            raise RuntimeError(
+            raise AudioDownloadError(
                 f"ffmpeg exited with code {rc}.\n"
                 f"stderr (last 500 chars):\n{stderr_text[-500:]}"
             )
 
         if total_bytes == 0:
-            stderr_text = stderr_output.decode(errors="replace")[-500:]
-            raise RuntimeError(
+            stderr_text = _safe_ffmpeg_stderr(stderr_output)[-500:]
+            raise AudioDownloadError(
                 f"ffmpeg produced no audio output (0 bytes received).\n"
                 f"stderr (last 500 chars):\n{stderr_text}"
             )
@@ -545,7 +554,7 @@ class Transcriber:
         return transcript, segments
 
     def _check_completeness(self, transcript: str,
-                            segments: list[dict]) -> None:
+                            segments: list[dict], diagnostics: str = "") -> None:
         """Raise IncompleteAudioError when we received <90 % of the media.
 
         ``_media_duration`` is parsed from ffmpeg's stderr by
@@ -558,7 +567,7 @@ class Transcriber:
                 raise IncompleteAudioError(
                     f"Only received {self._last_duration:.0f}s of "
                     f"{self._media_duration:.0f}s audio ({ratio:.0%}). "
-                    f"Connection may have dropped.",
+                    f"Connection may have dropped.{diagnostics}",
                     actual_duration=self._last_duration,
                     expected_duration=self._media_duration,
                     transcript=transcript,
@@ -595,8 +604,8 @@ class Transcriber:
         t_wait = time.time()
         while not os.path.exists(audio_path):
             if ffmpeg_proc.poll() is not None:
-                stderr_text = b"".join(stderr_chunks).decode(errors="replace")[-500:]
-                raise RuntimeError(
+                stderr_text = _safe_ffmpeg_stderr(b"".join(stderr_chunks))
+                raise AudioDownloadError(
                     f"ffmpeg exited (rc={ffmpeg_proc.returncode}) before "
                     f"writing audio file {audio_path}.\nstderr:\n{stderr_text}"
                 )
@@ -629,7 +638,11 @@ class Transcriber:
             # ffmpeg can exit 0 on a server-side truncated stream; without
             # this check the partial transcript would silently pass as a
             # complete lecture.
-            self._check_completeness(transcript, segments)
+            self._check_completeness(
+                transcript, segments,
+                f"\nffmpeg rc={ffmpeg_proc.returncode}; stderr:\n"
+                + _safe_ffmpeg_stderr(b"".join(stderr_chunks)),
+            )
             return transcript, segments
         finally:
             f.close()
@@ -706,7 +719,11 @@ class Transcriber:
             stderr_thread.join(timeout=5)
 
         # Both URL/pipe modes enforce the 90 % completeness check
-        self._check_completeness(transcript, segments)
+        self._check_completeness(
+            transcript, segments,
+            f"\nffmpeg rc={proc.returncode}; stderr:\n"
+            + _safe_ffmpeg_stderr(b"".join(stderr_chunks)),
+        )
 
         return transcript, segments
 
@@ -733,7 +750,11 @@ class Transcriber:
         return None
 
 
-class IncompleteAudioError(RuntimeError):
+class AudioDownloadError(RuntimeError):
+    """Media extraction failed; a fresh signed URL may recover it."""
+
+
+class IncompleteAudioError(AudioDownloadError):
     """Raised when downloaded audio is significantly shorter than expected.
 
     Carries the partial result so the caller can decide what to do with it
