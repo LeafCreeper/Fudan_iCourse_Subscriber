@@ -13,6 +13,30 @@ from src.runtime import config
 
 
 class OfficialTranscriptTests(unittest.TestCase):
+    def test_timestamp_coverage_cannot_make_filler_only_captions_usable(self):
+        segments = [
+            {'start_ms': i * 60000, 'end_ms': (i + 1) * 60000,
+             'text': ['嗯。', '啊，', '...', 'Uh.'][i % 4]}
+            for i in range(100)
+        ]
+        self.assertFalse(LectureRunner._official_transcript_usable(segments))
+
+    def test_filler_mixed_with_real_course_content_is_usable(self):
+        segments = [
+            {'start_ms': 0, 'end_ms': 60000, 'text': '嗯。'},
+            {'start_ms': 60000, 'end_ms': 120000,
+             'text': '二极管的电流与电压关系。'},
+        ]
+        self.assertTrue(LectureRunner._official_transcript_usable(segments))
+
+    def test_overwhelming_single_character_repetition_is_not_course_content(self):
+        segments = [
+            {'start_ms': i * 60000, 'end_ms': (i + 1) * 60000,
+             'text': '嗯。' if i < 96 else f'零星识别{i}'}
+            for i in range(100)
+        ]
+        self.assertFalse(LectureRunner._official_transcript_usable(segments))
+
     def test_enabled_by_default_and_can_be_explicitly_disabled(self):
         try:
             with patch.dict(os.environ):

@@ -282,6 +282,7 @@ class Emailer:
         self.password = config.SMTP_PASSWORD
         self.receiver = config.RECEIVER_EMAIL
         self.last_error_code: int | None = None
+        self.last_rate_limited = False
 
     def send(self, items: list[dict]) -> bool:
         """Send a single email containing all lecture summaries.
@@ -303,6 +304,7 @@ class Emailer:
             True if email was sent successfully, False otherwise.
         """
         self.last_error_code = None
+        self.last_rate_limited = False
         if not items:
             return True
 
@@ -420,7 +422,19 @@ class Emailer:
                 return True
             except smtplib.SMTPResponseException as e:
                 self.last_error_code = e.smtp_code
+                response = e.smtp_error
+                if isinstance(response, bytes):
+                    response = response.decode("utf-8", errors="replace")
+                response = str(response).lower()
+                self.last_rate_limited = any(
+                    marker in response
+                    for marker in ("too many attempts", "too many messages", "rate limit")
+                )
                 print(f"[Emailer] Attempt {attempt + 1}/3 failed: {e}")
+                # Retrying or splitting an explicitly throttled message only
+                # creates more attempts. Defer all remaining work to a later run.
+                if self.last_rate_limited:
+                    break
                 # A permanent rejection won't be fixed by sending the
                 # identical payload again. Let the caller isolate items.
                 if 500 <= e.smtp_code < 600:

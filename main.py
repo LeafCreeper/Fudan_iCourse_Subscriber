@@ -226,9 +226,16 @@ def _send_email(emailer: Emailer | None, db: Database, reporter: Reporter,
         reporter.email_summary(len(email_items))
         if emailer.send(email_items):
             db.mark_emailed_batch([item["sub_id"] for item in email_items])
+        elif getattr(emailer, "last_rate_limited", False) is True:
+            reporter.info("[Email] SMTP rate limit reached; deferring unsent lectures.")
+            for item in email_items:
+                reporter.email_failed(item["sub_id"])
         elif emailer.last_error_code == 550 and len(email_items) > 1:
             reporter.info("[Email] Digest rejected; isolating individual lectures.")
-            for item in email_items:
+            for index, item in enumerate(email_items):
+                if index:
+                    # A burst of individual messages can trigger SMTP limits.
+                    time.sleep(30)
                 try:
                     delivered = emailer.send([item])
                 except Exception:
@@ -236,6 +243,11 @@ def _send_email(emailer: Emailer | None, db: Database, reporter: Reporter,
                     traceback.print_exc()
                 if delivered:
                     db.mark_emailed_batch([item["sub_id"]])
+                elif getattr(emailer, "last_rate_limited", False) is True:
+                    reporter.info("[Email] SMTP rate limit reached; stopping split delivery.")
+                    for pending in email_items[index:]:
+                        reporter.email_failed(pending["sub_id"])
+                    break
                 else:
                     reporter.email_failed(item["sub_id"])
         else:

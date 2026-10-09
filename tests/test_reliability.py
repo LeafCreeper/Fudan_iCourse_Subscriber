@@ -18,6 +18,7 @@ from src.runtime.reporter import Reporter
 
 class DatabaseCase(unittest.TestCase):
     def setUp(self):
+        self.enterContext(patch('main.time.sleep'))
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.db = Database(str(Path(self.temp.name) / 'test.db'))

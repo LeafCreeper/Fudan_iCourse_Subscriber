@@ -38,6 +38,8 @@ threads pick up refreshed cookies through the shared ``ICourseClient``.
 from __future__ import annotations
 
 import time
+import re
+from collections import Counter
 from typing import TYPE_CHECKING, Callable, Optional
 
 from src.ai import bucketer
@@ -239,6 +241,25 @@ class LectureRunner:
         truncation)."""
         if not segments:
             return False
+        # Timestamps can cover an entire lecture even when speech recognition
+        # produced only punctuation or repeated interjections. Those captions
+        # carry no course content and must fall back to the audio path.
+        normalized = [
+            "".join(c for c in segment.get("text", "") if c.isalnum()).casefold()
+            for segment in segments
+        ]
+        def has_content(text):
+            return bool(text) and not (
+                re.fullmatch(r"[嗯呃啊哦唉哎喔噢唔]+", text)
+                or text in {"uh", "um", "hmm", "huh", "yeah", "ok", "okay"}
+            )
+        if not any(has_content(text) for text in normalized):
+            return False
+        if len(normalized) >= 20:
+            dominant = Counter(normalized).most_common(1)[0][1]
+            single_character = sum(len(text) <= 1 for text in normalized)
+            if dominant / len(normalized) >= 0.9 and single_character / len(normalized) >= 0.8:
+                return False
         max_gap_ms = max_gap_minutes * 60_000
         if segments[0]["start_ms"] > max_gap_ms:
             return False
