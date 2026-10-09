@@ -14,8 +14,10 @@ workers (image downloads, OCR, audio downloader) interleave cleanly.
 
 from __future__ import annotations
 
+import os
 import threading
 import time
+from html import escape
 
 
 # ── Resource state for _resource_meter (kept across calls) ────────────────
@@ -67,6 +69,8 @@ class Reporter:
 
     def __init__(self):
         self._lock = threading.Lock()
+        self._failures: set[tuple[str, str]] = set()
+        self._waiting_playback: set[str] = set()
         # sub_id -> (last_done_emitted_at_count, t0, last_print_t)
         self._image_progress_state: dict[str, dict] = {}
         self._ocr_progress_state: dict[str, dict] = {}
@@ -82,8 +86,29 @@ class Reporter:
 
     def run_footer(self):
         with self._lock:
+            status = (f"Run failed: {len(self._failures)} unresolved item(s)."
+                      if self._failures else "Run complete.")
+            if self._waiting_playback:
+                status += f" Waiting for playback: {len(self._waiting_playback)} lecture(s)."
             print(f"\n{'=' * 60}")
-            print("Run complete.", flush=True)
+            print(status, flush=True)
+            summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+            if summary_path:
+                with open(summary_path, "a", encoding="utf-8") as summary:
+                    summary.write(f"## iCourse Check\n\n{status}\n\n")
+                    for stage, item in sorted(self._failures):
+                        summary.write(f"- {escape(stage)}: <code>{escape(item)}</code>\n")
+                    for item in sorted(self._waiting_playback):
+                        summary.write(f"- waiting for playback: <code>{escape(item)}</code>\n")
+
+    def raise_if_failed(self):
+        """Fail the job only after successful work and email state are saved."""
+        with self._lock:
+            if self._failures:
+                raise RuntimeError(
+                    f"Run has {len(self._failures)} unresolved failure(s); "
+                    "see the run summary and logs."
+                )
 
     # ── Course-level ─────────────────────────────────────────────────────
 
@@ -109,6 +134,7 @@ class Reporter:
 
     def course_enumeration_error(self, course_id: str):
         with self._lock:
+            self._failures.add(("course enumeration", str(course_id)))
             print(f"  ERROR enumerating course {course_id}:", flush=True)
 
     # ── Lecture-level ────────────────────────────────────────────────────
@@ -129,7 +155,13 @@ class Reporter:
 
     def lecture_skip_no_video(self, sub_title: str):
         with self._lock:
-            print(f"    No video URL — skipping.", flush=True)
+            self._waiting_playback.add(str(sub_title))
+            print("    No video URL — waiting for playback on a later run.", flush=True)
+
+    def lecture_retry_exhausted(self, sub_id: str):
+        with self._lock:
+            self._failures.add(("retry_exhausted", str(sub_id)))
+            print(f"    Retry limit reached for {sub_id}; still missing a summary.", flush=True)
 
     def lecture_done(self, course_title: str, sub_title: str, elapsed: float):
         with self._lock:
@@ -139,6 +171,7 @@ class Reporter:
 
     def lecture_error(self, sub_id: str):
         with self._lock:
+            self._failures.add(("lecture", str(sub_id)))
             print(f"    ERROR processing {sub_id}:", flush=True)
 
     # ── PPT pipeline ─────────────────────────────────────────────────────
@@ -299,8 +332,9 @@ class Reporter:
             print(f"\n[Email] Sending summary for {n} lecture(s)...",
                   flush=True)
 
-    def email_failed(self):
+    def email_failed(self, sub_id: str = "batch"):
         with self._lock:
+            self._failures.add(("email", str(sub_id)))
             print("[Email] Send failed, lectures will be retried next run.",
                   flush=True)
 

@@ -281,6 +281,8 @@ class Emailer:
         self.sender = config.SMTP_EMAIL
         self.password = config.SMTP_PASSWORD
         self.receiver = config.RECEIVER_EMAIL
+        self.last_error_code: int | None = None
+        self.last_rate_limited = False
 
     def send(self, items: list[dict]) -> bool:
         """Send a single email containing all lecture summaries.
@@ -301,6 +303,8 @@ class Emailer:
         Returns:
             True if email was sent successfully, False otherwise.
         """
+        self.last_error_code = None
+        self.last_rate_limited = False
         if not items:
             return True
 
@@ -410,12 +414,35 @@ class Emailer:
         # Retry with exponential backoff
         for attempt in range(3):
             try:
-                with smtplib.SMTP_SSL(self.host, self.port) as server:
+                with smtplib.SMTP_SSL(self.host, self.port, timeout=60) as server:
                     server.login(self.sender, self.password)
                     server.sendmail(self.sender, self.receiver, msg.as_string())
                 print(f"[Emailer] Sent: {subject}")
+                self.last_error_code = None
                 return True
+            except smtplib.SMTPResponseException as e:
+                self.last_error_code = e.smtp_code
+                response = e.smtp_error
+                if isinstance(response, bytes):
+                    response = response.decode("utf-8", errors="replace")
+                response = str(response).lower()
+                self.last_rate_limited = any(
+                    marker in response
+                    for marker in ("too many attempts", "too many messages", "rate limit")
+                )
+                print(f"[Emailer] Attempt {attempt + 1}/3 failed: {e}")
+                # Retrying or splitting an explicitly throttled message only
+                # creates more attempts. Defer all remaining work to a later run.
+                if self.last_rate_limited:
+                    break
+                # A permanent rejection won't be fixed by sending the
+                # identical payload again. Let the caller isolate items.
+                if 500 <= e.smtp_code < 600:
+                    break
+                if attempt < 2:
+                    time.sleep(2 ** attempt)
             except Exception as e:
+                self.last_error_code = None
                 print(f"[Emailer] Attempt {attempt + 1}/3 failed: {e}")
                 if attempt < 2:
                     time.sleep(2 ** attempt)

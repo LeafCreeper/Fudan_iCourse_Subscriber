@@ -19,6 +19,15 @@ from src.api.webvpn import WebVPNSession, get_vpn_url
 _DATE_FROM_SUB_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})")
 
 
+class PlaybackLookupError(RuntimeError):
+    """Playback availability could not be established because a query failed."""
+
+
+def _is_mp4_url(value: object) -> bool:
+    """Recognize MP4 paths even when the URL carries query parameters."""
+    return isinstance(value, str) and urlparse(value).path.endswith(".mp4")
+
+
 def _extract_date_from_sub(sub_title: str) -> str | None:
     """Extract YYYY-MM-DD from a sub_title like "2026-03-05第6-8节"."""
     if not sub_title:
@@ -478,11 +487,15 @@ class ICourseClient:
         CDN itself does not enforce the gate, so a signed URL from
         either source downloads successfully.
 
-        Returns the signed video URL string, or None if no source yields one.
+        Returns a signed URL, or None only if both queries succeeded without
+        finding a video. Raises PlaybackLookupError if no video was found and
+        either query failed; query failures must not be classified as no video.
         """
+        lookup_errors: list[str] = []
         try:
             info = self.get_sub_info(course_id, sub_id)
         except Exception as e:
+            lookup_errors.append(f"sub-info: {type(e).__name__}")
             print(f"    sub-info unavailable for {sub_id} "
                   f"({type(e).__name__}); falling back to sub-detail")
             info = {}
@@ -501,7 +514,7 @@ class ICourseClient:
             for _, v in video_list.items():
                 if isinstance(v, dict):
                     preview = v.get("preview_url")
-                    if preview and preview.endswith(".mp4"):
+                    if _is_mp4_url(preview):
                         base_url = preview
                         break
 
@@ -512,7 +525,7 @@ class ICourseClient:
                 for k, v in playurl.items():
                     if k == "now":
                         continue
-                    if isinstance(v, str) and v.endswith(".mp4"):
+                    if _is_mp4_url(v):
                         base_url = v
                         break
 
@@ -521,7 +534,7 @@ class ICourseClient:
         if not base_url:
             playback = (info.get("content") or {}).get("playback") or {}
             nested = playback.get("url")
-            if isinstance(nested, str) and nested.endswith(".mp4"):
+            if _is_mp4_url(nested):
                 base_url = nested
                 if not now:
                     content_now = (info.get("content") or {}).get("now")
@@ -536,10 +549,16 @@ class ICourseClient:
                 playback = content.get("playback", {})
                 if playback and playback.get("url"):
                     base_url = playback["url"]
-            except Exception:
-                pass
+            except Exception as e:
+                lookup_errors.append(f"sub-detail: {type(e).__name__}")
 
         if not base_url:
+            if lookup_errors:
+                # Exception messages can contain signed URLs or response bodies.
+                # Retain only query names and exception types in saved diagnostics.
+                raise PlaybackLookupError(
+                    "Playback lookup failed (" + "; ".join(lookup_errors) + ")"
+                ) from None
             print(f"    No video URL found for {sub_id} (tried video_list, "
                   f"playurl, content.playback, sub_detail)")
             return None

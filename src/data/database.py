@@ -10,6 +10,7 @@ from src.data.schema import (
     LECTURES_MIGRATION_COLUMNS,
     PPT_PAGES_MIGRATION_COLUMNS,
     SCHEMA_SQL,
+    requeue_incomplete_lectures,
 )
 
 
@@ -65,6 +66,8 @@ class Database:
                     self.conn.execute(
                         f"ALTER TABLE ppt_pages ADD COLUMN {col} {typedef}"
                     )
+
+            requeue_incomplete_lectures(self.conn)
 
     def write_meta(self, key: str, value: str):
         """Persist a key-value pair (e.g. COURSE_IDS from CI secret)."""
@@ -192,19 +195,34 @@ class Database:
             ).fetchall()
         return {row["sub_id"] for row in rows}
 
+    def get_ineligible_sub_ids(self, course_id: str,
+                               max_errors: int = 3) -> set[str]:
+        """Exclude completed work and exhausted failures from live enumeration.
+
+        A recording waiting to be published remains eligible on later runs.
+        """
+        with self._lock:
+            rows = self.conn.execute(
+                """SELECT sub_id FROM lectures WHERE course_id = ?
+                   AND (processed_at IS NOT NULL OR
+                        (COALESCE(error_count, 0) >= ?
+                         AND COALESCE(error_stage, '') != 'no_video'))""",
+                (course_id, max_errors),
+            ).fetchall()
+        return {row["sub_id"] for row in rows}
+
     def get_unprocessed_lectures(self, course_id: str | None = None,
                                   max_errors: int = 3) -> list[dict]:
         """Return lectures that need (re-)processing.
 
-        Only returns lectures whose ``error_count`` is below *max_errors* —
-        a permanently-failing lecture (e.g. ``get-sub-info`` RuntimeError
-        for a removed recording) is abandoned after that many attempts
-        rather than clogging every workflow run.
+        Failures stop after *max_errors* attempts. A successful API lookup
+        with no video remains pending, since recording publication can be
+        delayed by more than three daily runs.
         """
         query = (
             "SELECT * FROM lectures"
             " WHERE processed_at IS NULL"
-            "   AND (error_count IS NULL OR error_count < ?)"
+            "   AND (error_count IS NULL OR error_count < ? OR error_stage = 'no_video')"
         )
         params: tuple = (max_errors,)
         if course_id:
@@ -252,9 +270,13 @@ class Database:
             self.conn.execute(
                 """UPDATE lectures
                    SET error_stage = ?, error_msg = ?,
-                       error_count = COALESCE(error_count, 0) + 1
+                       error_count = CASE
+                           WHEN ? = 'no_video' THEN 0
+                           WHEN error_stage = 'no_video' THEN 1
+                           ELSE COALESCE(error_count, 0) + 1
+                       END
                    WHERE sub_id = ?""",
-                (stage, error_msg, sub_id),
+                (stage, error_msg, stage, sub_id),
             )
 
     def clear_error(self, sub_id: str):
