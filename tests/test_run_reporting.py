@@ -34,6 +34,17 @@ class ReportingTests(unittest.TestCase):
         self.assertTrue(callable(getattr(reporter, 'raise_if_failed', None)))
         reporter.raise_if_failed()
 
+    def test_waiting_playback_is_visible_without_claiming_failure(self):
+        reporter = Reporter()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'summary.md'
+            with patch.dict(os.environ, {'GITHUB_STEP_SUMMARY': str(path)}), contextlib.redirect_stdout(io.StringIO()):
+                reporter.lecture_skip_no_video('123')
+                reporter.run_footer()
+            self.assertIn('waiting', path.read_text().lower())
+            self.assertIn('123', path.read_text())
+        reporter.raise_if_failed()
+
 class EmailReportingTests(unittest.TestCase):
     def test_rejected_lecture_is_identified_in_summary(self):
         reporter = Reporter()

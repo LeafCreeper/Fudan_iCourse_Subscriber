@@ -15,6 +15,7 @@ from src.data.schema import (
     LECTURES_MIGRATION_COLUMNS,
     PPT_PAGES_MIGRATION_COLUMNS,
     SCHEMA_SQL,
+    requeue_incomplete_lectures,
 )
 
 
@@ -65,6 +66,10 @@ def merge(local_path: str, remote_path: str):
 
     try:
         with conn:
+            # Normalize both inputs before COALESCE merges timestamps and
+            # clears errors. This preserves retries repaired by Database.
+            requeue_incomplete_lectures(conn)
+            requeue_incomplete_lectures(conn, "local")
             # 1) Courses: upsert
             conn.execute("""
                 INSERT OR REPLACE INTO main.courses (course_id, title, teacher)

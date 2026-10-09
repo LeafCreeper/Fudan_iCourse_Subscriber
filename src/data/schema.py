@@ -82,3 +82,24 @@ LECTURES_MIGRATION_COLUMNS: list[tuple[str, str]] = [
 PPT_PAGES_MIGRATION_COLUMNS: list[tuple[str, str]] = [
     ("dhash", "TEXT"),
 ]
+
+
+def requeue_incomplete_lectures(conn, schema: str = "main"):
+    """Undo legacy false completion without erasing errors or valid summaries.
+
+    Also used before merging two databases so a stale remote completion
+    timestamp cannot resurrect a lecture that has no summary.
+    """
+    if schema not in ("main", "local"):
+        raise ValueError("Unsupported database schema")
+    conn.execute(f"""
+        UPDATE {schema}.lectures SET processed_at = NULL, summary = NULL,
+                                    summary_model = NULL
+        WHERE COALESCE(TRIM(summary), '') = ''
+    """)
+    # Waiting for a recording is not a processing failure. Normalize old
+    # counters on both sides of a merge before MAX combines real failures.
+    conn.execute(f"""
+        UPDATE {schema}.lectures SET error_count = 0
+        WHERE error_stage = 'no_video'
+    """)

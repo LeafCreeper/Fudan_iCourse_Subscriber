@@ -148,10 +148,11 @@ class LectureRunner:
 
         # ── Phase F — bucketed-prompt LLM summary ──────────────────────
         if not transcript.strip():
-            self._reporter.info("    Empty transcript, skipping summary.")
+            self._reporter.info("    Empty transcript, will retry on a later run.")
             self._release_audio(sub_id)
-            self._db.mark_processed(sub_id)
-            self._db.clear_error(sub_id)
+            self._db.update_error(
+                sub_id, "empty_transcript", "audio decoded but ASR returned no text"
+            )
             return None
 
         summary = self._summarize(
@@ -178,7 +179,7 @@ class LectureRunner:
     def _has_summary(existing: dict | None) -> bool:
         return bool(
             existing
-            and existing.get("summary")
+            and (existing.get("summary") or "").strip()
         )
 
     def prefetch_first(self, course_id: str, sub_id: str) -> None:
@@ -318,7 +319,6 @@ class LectureRunner:
             except NoAudioStreamError as e:
                 self._reporter.info(f"    [SKIP] Video-only (no audio stream): {e}")
                 self._db.update_error(sub_id, "transcribe", str(e))
-                self._db.mark_processed(sub_id)
                 self._release_audio(sub_id)
                 return None, None
             except (AudioDownloadError, TimeoutError) as e:
@@ -377,5 +377,3 @@ class LectureRunner:
             self._reporter.info(
                 f"    [WARN] audio release failed: {type(e).__name__}: {e}"
             )
-
-
