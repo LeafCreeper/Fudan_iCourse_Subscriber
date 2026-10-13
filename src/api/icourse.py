@@ -501,7 +501,7 @@ class ICourseClient:
             for _, v in video_list.items():
                 if isinstance(v, dict):
                     preview = v.get("preview_url")
-                    if preview and preview.endswith(".mp4"):
+                    if preview and urlparse(preview).path.endswith(".mp4"):
                         base_url = preview
                         break
 
@@ -512,7 +512,7 @@ class ICourseClient:
                 for k, v in playurl.items():
                     if k == "now":
                         continue
-                    if isinstance(v, str) and v.endswith(".mp4"):
+                    if isinstance(v, str) and urlparse(v).path.endswith(".mp4"):
                         base_url = v
                         break
 
@@ -521,7 +521,7 @@ class ICourseClient:
         if not base_url:
             playback = (info.get("content") or {}).get("playback") or {}
             nested = playback.get("url")
-            if isinstance(nested, str) and nested.endswith(".mp4"):
+            if isinstance(nested, str) and urlparse(nested).path.endswith(".mp4"):
                 base_url = nested
                 if not now:
                     content_now = (info.get("content") or {}).get("now")
