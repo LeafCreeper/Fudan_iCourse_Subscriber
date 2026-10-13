@@ -38,6 +38,7 @@ threads pick up refreshed cookies through the shared ``ICourseClient``.
 from __future__ import annotations
 
 import time
+from collections import Counter
 from typing import TYPE_CHECKING, Optional
 
 from src.ai import bucketer
@@ -235,6 +236,16 @@ class LectureRunner:
         bound on lecture length) — after the last segment (tail
         truncation)."""
         if not segments:
+            return False
+        texts = [
+            "".join(c for c in segment["text"] if c.isalnum())
+            for segment in segments
+        ]
+        if not any(texts):
+            return False
+        # Some broken captions cover the full recording with one repeated character.
+        text, count = Counter(texts).most_common(1)[0]
+        if len(texts) >= 20 and len(text) <= 1 and count / len(texts) >= 0.9:
             return False
         max_gap_ms = max_gap_minutes * 60_000
         if segments[0]["start_ms"] > max_gap_ms:
