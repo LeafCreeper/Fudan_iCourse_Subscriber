@@ -139,6 +139,9 @@ class _PendingSpawn:
     the spawn thread detect that its entry was ``release()``-d (or replaced)
     in the meantime and abort instead of resurrecting a zombie entry."""
 
+    def __init__(self):
+        self.error: RuntimeError | None = None
+
 
 class AudioDownloader:
     """Spawn-and-track concurrent ``ffmpeg`` audio extractions.
@@ -291,10 +294,13 @@ class AudioDownloader:
                     target=self._monitor, args=(handle,),
                     name=f"audio-monitor-{sub_id}", daemon=True,
                 ).start()
-            except Exception:
-                self._pop_if_mine(sub_id, pending)
+            except Exception as e:
+                error = RuntimeError(f"Audio prefetch for {sub_id} failed ({type(e).__name__})")
+                with self._lock:
+                    if self._active.get(sub_id) is pending:
+                        pending.error = error
                 self._sem.release()
-                raise
+                raise error from None
         except Exception as e:
             if self._reporter:
                 self._reporter.audio_prefetch_failed(sub_id, e)
@@ -308,6 +314,7 @@ class AudioDownloader:
 
         Returns None if sub_id was never scheduled (or already released).
         Raises TimeoutError if the spawn never happens within ``timeout``.
+        Raises RuntimeError if playback lookup or ffmpeg startup failed.
         """
         sub_id = str(sub_id)
         deadline = time.time() + timeout
@@ -318,6 +325,8 @@ class AudioDownloader:
                     return None
                 if isinstance(entry, AudioHandle):
                     return entry
+                if entry.error is not None:
+                    raise entry.error
             if time.time() > deadline:
                 raise TimeoutError(
                     f"audio download for {sub_id} did not start within "

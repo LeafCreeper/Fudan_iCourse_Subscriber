@@ -300,9 +300,10 @@ class LectureRunner:
         downloader.schedule(self._client, course_id, sub_id)
         try:
             handle = downloader.get(sub_id, timeout=120)
-        except TimeoutError as e:
+        except (TimeoutError, RuntimeError) as e:
             self._reporter.info(f"    [SKIP] {e}")
             self._db.update_error(sub_id, "transcribe", str(e))
+            self._release_audio(sub_id)
             return None, None
         if handle is None:
             # AudioDownloader returns None when get_video_url() returned

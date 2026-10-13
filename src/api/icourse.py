@@ -478,11 +478,14 @@ class ICourseClient:
         CDN itself does not enforce the gate, so a signed URL from
         either source downloads successfully.
 
-        Returns the signed video URL string, or None if no source yields one.
+        Returns a signed URL, or None when both queries succeed without a URL.
+        Raises RuntimeError if no URL is found and a query failed.
         """
+        lookup_errors = []
         try:
             info = self.get_sub_info(course_id, sub_id)
         except Exception as e:
+            lookup_errors.append(f"sub-info: {type(e).__name__}")
             print(f"    sub-info unavailable for {sub_id} "
                   f"({type(e).__name__}); falling back to sub-detail")
             info = {}
@@ -536,10 +539,13 @@ class ICourseClient:
                 playback = content.get("playback", {})
                 if playback and playback.get("url"):
                     base_url = playback["url"]
-            except Exception:
-                pass
+            except Exception as e:
+                lookup_errors.append(f"sub-detail: {type(e).__name__}")
 
         if not base_url:
+            if lookup_errors:
+                # Query messages may contain signed URLs; report only error types.
+                raise RuntimeError("Playback lookup failed (" + "; ".join(lookup_errors) + ")")
             print(f"    No video URL found for {sub_id} (tried video_list, "
                   f"playurl, content.playback, sub_detail)")
             return None
