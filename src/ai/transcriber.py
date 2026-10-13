@@ -357,8 +357,9 @@ class Transcriber:
         timeout: int,
         wait_on_empty_sec: float = 0.0,
         label: str = "stream",
+        input_channels: int = 1,
     ) -> tuple[str, list[dict]]:
-        """Pull PCM f32le mono 16 kHz bytes through a callable, feed VAD/ASR,
+        """Pull PCM f32le 16 kHz bytes through a callable, feed mono to VAD/ASR,
         return ``(transcript, segments)``.
 
         Args:
@@ -372,7 +373,10 @@ class Transcriber:
             timeout: total seconds before we give up and raise TimeoutError.
             wait_on_empty_sec: poll interval for the tail-f wait branch; set
                 0 for pipe sources (where empty read truly means EOF).
+            input_channels: 1 for mono PCM, 2 for interleaved stereo PCM.
         """
+        if input_channels not in (1, 2):
+            raise ValueError("PCM input must be mono or stereo")
         self._init()
         self._reset_vad()
         t0 = time.time()
@@ -385,6 +389,9 @@ class Transcriber:
         last_report = t0
         last_segment_at = 0.0
         silence_marked = False
+        block_bytes = BYTES_PER_SECOND * input_channels
+        pending = b""
+        corrected_samples = 0
 
         while True:
             now = time.time()
@@ -393,16 +400,35 @@ class Transcriber:
                     f"Transcription timed out after {timeout}s"
                 )
 
-            raw = read_fn(BYTES_PER_SECOND)
-            if not raw:
-                if is_eof_fn():
-                    break
-                if wait_on_empty_sec > 0:
+            raw = read_fn(block_bytes - len(pending))
+            total_bytes += len(raw)
+            pending += raw
+            at_eof = not raw and is_eof_fn()
+            # Tail-f reads can stop in the middle of a stereo frame. Keep
+            # complete one-second blocks so channel decisions are independent
+            # of how ffmpeg splits its writes; process the short tail at EOF.
+            if len(pending) < block_bytes and not at_eof:
+                if not raw and wait_on_empty_sec > 0:
                     time.sleep(wait_on_empty_sec)
                 continue
+            if not pending:
+                break
+            if len(pending) % (BYTES_PER_SAMPLE * input_channels):
+                raise RuntimeError("Audio ended with an incomplete PCM frame")
 
-            total_bytes += len(raw)
-            samples = np.frombuffer(raw, dtype=np.float32)
+            samples = np.frombuffer(pending, dtype=np.float32)
+            pending = b""
+            if input_channels == 2:
+                stereo = samples.reshape(-1, 2)
+                left, right = stereo[:, 0], stereo[:, 1]
+                samples = (left + right) * np.float32(2 ** -0.5)
+                channel_power = np.mean(stereo * stereo, axis=0)
+                # Opposite-polarity microphone channels can cancel speech.
+                # Correct only when mixing loses >6 dB vs the stronger input;
+                # normal stereo, mono and one-sided audio keep ffmpeg's mix.
+                if np.mean(samples * samples) < 0.25 * np.max(channel_power):
+                    samples = (left - right) * np.float32(2 ** -0.5)
+                    corrected_samples += len(samples)
             total_read += len(samples)
             audio_pos = total_read / SAMPLE_RATE
 
@@ -475,6 +501,12 @@ class Transcriber:
         elapsed = time.time() - t0
         duration = total_read / SAMPLE_RATE
         self._last_duration = duration
+        if corrected_samples:
+            print(
+                f"[Transcriber] Corrected stereo cancellation in "
+                f"{corrected_samples / SAMPLE_RATE:.1f}s audio",
+                flush=True,
+            )
 
         if self._media_duration:
             print(
@@ -575,7 +607,7 @@ class Transcriber:
         """Read PCM samples from a disk file that ffmpeg is *concurrently* writing.
 
         Args:
-            audio_path: Path of the f32le mono 16 kHz file ffmpeg writes to.
+            audio_path: Path of the f32le stereo 16 kHz file ffmpeg writes to.
             ffmpeg_proc: The Popen handle for the ffmpeg process so we can
                 know when "no more data ever".  Owned by the caller (Scheduler).
             stderr_chunks: List that the caller's stderr-drain thread appends to.
@@ -625,6 +657,7 @@ class Transcriber:
                 timeout=timeout,
                 wait_on_empty_sec=0.1,
                 label="tail",
+                input_channels=2,
             )
             # ffmpeg can exit 0 on a server-side truncated stream; without
             # this check the partial transcript would silently pass as a
@@ -655,7 +688,7 @@ class Transcriber:
             "-reconnect_delay_max", "5",
             "-i", url,
             "-vn",
-            "-ar", str(SAMPLE_RATE), "-ac", "1",
+            "-ar", str(SAMPLE_RATE), "-ac", "2",
             "-f", "f32le", "-",
         ]
         return self._transcribe_with_inline_ffmpeg(cmd, timeout=timeout)
@@ -664,7 +697,7 @@ class Transcriber:
         """Transcribe a local mp4 file via ffmpeg-to-pipe."""
         cmd = [
             "ffmpeg", "-i", video_path,
-            "-ar", str(SAMPLE_RATE), "-ac", "1",
+            "-ar", str(SAMPLE_RATE), "-ac", "2",
             "-f", "f32le", "-",
         ]
         return self._transcribe_with_inline_ffmpeg(cmd)
@@ -698,6 +731,7 @@ class Transcriber:
                 timeout=timeout,
                 wait_on_empty_sec=0,
                 label="pipe",
+                input_channels=2,
             )
         finally:
             if proc.poll() is None:
