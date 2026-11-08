@@ -188,6 +188,48 @@ jobs:
           unset SECRETS_CONTEXT
           python -u main.py
 
+      # `main.py` rebuilds `archive/` right before it deletes the generated
+      # decks.  The runner is ephemeral, so push it to its own branch: merge
+      # history is not involved, and a local `git pull` of `archive` is the
+      # intended way to read the summaries / decks.
+      - name: Deploy archive to archive branch
+        if: always()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ ! -d archive ]; then
+            echo "No archive directory, skipping."
+            exit 0
+          fi
+
+          DEPLOY_DIR=/tmp/archive_deploy
+          rm -rf "$DEPLOY_DIR"
+          git init -q "$DEPLOY_DIR"
+          cd "$DEPLOY_DIR"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
+
+          if git fetch -q --depth=1 origin archive 2>/dev/null; then
+            git checkout -q -b archive FETCH_HEAD
+          else
+            echo "Creating archive branch."
+            git checkout -q --orphan archive
+          fi
+
+          # The tree is rebuilt from the database every run, so replace it
+          # wholesale: a lecture re-summarised into new text must not leave
+          # the previous version behind.
+          rm -rf archive
+          cp -a "${GITHUB_WORKSPACE}/archive" ./archive
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Archive unchanged, nothing to push."
+            exit 0
+          fi
+          git commit -q -m "chore: archive course summaries and slide decks"
+          git push -q origin archive
+
       - name: Deploy database to data branch
         if: always()
         env:

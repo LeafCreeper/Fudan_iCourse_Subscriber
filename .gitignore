@@ -53,3 +53,6 @@ db-viewer/
 # .github/
 # Shard inspection temp files
 _shard_inspect/
+
+# Generated per-run tree, committed to the `archive` branch by CI
+archive/

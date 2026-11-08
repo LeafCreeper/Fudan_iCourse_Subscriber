@@ -268,6 +268,31 @@ def _send_email(emailer: Emailer | None, db: Database, reporter: Reporter,
         traceback.print_exc()
 
 
+def _archive_outputs(db: Database, reporter: Reporter) -> None:
+    """Rebuild the ``archive/`` tree that CI commits to the archive branch.
+
+    Runs after the email (so the summaries match what was sent) and before
+    ``_cleanup_ppt_exports`` (so the freshly built decks still exist).  Best
+    effort: archiving must never fail the run, since the summaries are already
+    in the database and on their way out by email.
+    """
+    try:
+        from src.pipeline.archive import archive_run
+        stats = archive_run(db)
+        reporter.info(
+            f"[Archive] {stats['courses']} course file(s), "
+            f"{stats['lectures']} lecture(s), {stats['decks']} deck(s) "
+            f"→ {stats['dir']}"
+        )
+        if stats["skipped_decks"]:
+            reporter.info(
+                f"[Archive] {stats['skipped_decks']} deck(s) skipped"
+            )
+    except Exception:
+        reporter.info("[Archive] Failed:")
+        traceback.print_exc()
+
+
 def _crawl_semester_catalog(client: ICourseClient, db: Database,
                             reporter: Reporter) -> None:
     """Discover semesters on every run and fetch catalogs for new terms.
@@ -380,6 +405,7 @@ def run():
         scheduler.shutdown()
 
     _send_email(emailer, db, reporter, email_items)
+    _archive_outputs(db, reporter)
     _cleanup_ppt_exports()
     reporter.run_footer()
 
