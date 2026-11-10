@@ -35,6 +35,7 @@
 |---|---|---|---|
 | `STUID` | ✅ | 复旦学号 | `22307110000` |
 | `UISPSW` | ✅ | UIS 统一身份认证密码 | `your_password` |
+| `UIS_TOTP_SECRET` | ✅ | 二次验证要求的动态口令（OTP）（见下） | `XXW33***********` |
 | `COURSE_IDS` | ✅ | 要监控的课程 ID，多个用英文逗号分隔 | `35472,30251` |
 | `DASHSCOPE_API_KEY` | ⬜ | ModelScope 平台 API Key | `ms-xxxxxxxx` |
 | `DEEPSEEK_API_KEY` | ⬜ | DeepSeek API Key（推荐） | `sk-xxxxxxxx` |
@@ -44,6 +45,15 @@
 | `RECEIVER_EMAIL` | ✅ | 接收摘要邮件的邮箱 | `you@m.fudan.edu.com` |
 
 > 至少配置一个 LLM API Key（DASHSCOPE、DEEPSEEK 或 GEMINI）。程序按配置顺序自动回退尝试。如果需要选择其他的LLM供应商，可以在`src\runtime\config.py`路径下自定义供应商。
+
+#### 配置动态口令二次验证（TOTP）
+
+> 2026/11/09 iCourse 平台升级了登录策略，要求所有账号在密码验证后进行二次验证（TOTP），我们采用 TOP 登录的方法进行二次验证
+
+进入 [UIS 个人中心的账号安全页面](https://id.fudan.edu.cn/uc/#/pc/userCenter/accountSecurity)，在「动态口令」中按提示完成绑定，并保存绑定时获取的 **Base32 密钥**，按上述的 Secrets 填入 `UIS_TOTP_SECRET` 即可
+
+![UIS 动态口令绑定页面，箭头所指密钥用于 UIS_TOTP_SECRET](docs/uis-totp.png)
+
 
 ### 第 3 步：获取课程 ID
 
