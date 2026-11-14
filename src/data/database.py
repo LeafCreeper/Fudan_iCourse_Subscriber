@@ -160,18 +160,13 @@ class Database:
                 ).fetchall()
         return [dict(r) for r in rows]
 
-    def has_all_courses(self) -> bool:
-        """True if the catalog has any rows — cheap existence probe.
-
-        Used by the nightly run to decide whether to skip the catalog
-        crawl on non-5th/25th days.  ``SELECT 1 ... LIMIT 1`` runs in
-        microseconds even with 20k rows; the previous ``bool(list_all_courses())``
-        materialised the whole catalog into Python just to call ``bool`` on it.
-        """
+    def list_catalog_terms(self) -> set[str]:
+        """Return stored semester names without loading the course catalog."""
         with self._lock:
-            return self.conn.execute(
-                "SELECT 1 FROM all_courses LIMIT 1"
-            ).fetchone() is not None
+            rows = self.conn.execute(
+                "SELECT DISTINCT term FROM all_courses"
+            ).fetchall()
+        return {row["term"] for row in rows}
 
     def insert_lecture(
         self, sub_id: str, course_id: str, sub_title: str, date: str

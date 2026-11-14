@@ -2,6 +2,7 @@ import os
 
 STUDENT_ID = os.environ.get("StuId", "")
 PASSWORD = os.environ.get("UISPsw", "")
+TOTP_SECRET = os.environ.get("UIS_TOTP_SECRET", "").strip()
 
 WEBVPN_BASE = "https://webvpn.fudan.edu.cn"
 IDP_BASE = "https://id.fudan.edu.cn"
@@ -31,8 +32,9 @@ MODEL_PROVIDERS: list[dict] = [
         "base_url_env": "DASHSCOPE_BASE_URL",
         "default_base_url": "https://api-inference.modelscope.cn/v1/",
         "models": [
-            "deepseek-ai/DeepSeek-V4-Pro",
-            "deepseek-ai/DeepSeek-V4-Flash"
+            "deepseek-ai/DeepSeek-V4-Pro-0813",
+            "deepseek-ai/DeepSeek-V4.1-Flash"
+            
         ],
     },
     {
