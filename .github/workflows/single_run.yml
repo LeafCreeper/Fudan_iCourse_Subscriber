@@ -8,50 +8,16 @@ on:
         required: true
         type: string
       use_official_transcript:
-        description: "Prefer official transcripts; video-first runs also fall back to them when no video URL exists"
+        description: "Use official iCourse transcripts instead of ASR"
         required: false
         default: false
         type: boolean
-      source_check:
-        description: "Check a single lecture's video source without saving results"
-        required: false
-        default: false
-        type: boolean
-      source_sub_id:
-        description: "Lecture ID for source check"
-        required: false
-        type: string
 
 permissions:
   contents: write
 
 jobs:
-  source_check:
-    if: inputs.source_check
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - run: pip install -r requirements.txt
-      - run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg
-      - name: Check video source
-        env:
-          StuId: ${{ secrets.STUID }}
-          UISPsw: ${{ secrets.UISPSW }}
-          UIS_TOTP_SECRET: ${{ secrets.UIS_TOTP_SECRET }}
-          COURSE_ID: ${{ inputs.course_ids }}
-          SUB_ID: ${{ inputs.source_sub_id }}
-        run: python -m scripts.check_video_source
-
   run:
-    if: ${{ !inputs.source_check }}
     runs-on: ubuntu-latest
     timeout-minutes: 360
 
