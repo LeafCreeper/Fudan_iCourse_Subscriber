@@ -12,6 +12,8 @@ import time
 import uuid
 from urllib.parse import urlparse
 
+from requests.exceptions import RequestException
+
 from src.runtime import config
 from src.api.webvpn import WebVPNSession, get_vpn_url
 
@@ -25,6 +27,7 @@ def _extract_date_from_sub(sub_title: str) -> str | None:
         return None
     m = _DATE_FROM_SUB_RE.match(sub_title)
     return m.group(1) if m else None
+
 
 def fetch_ppt_image(client: "ICourseClient", item: dict,
                     max_attempts: int = 2, timeout: int = 30) -> bytes | None:
@@ -471,6 +474,7 @@ class ICourseClient:
           2. info.playurl[*]                    — healthy alternate
           3. info.content.playback.url          — review-gated (no extra call)
           4. get-sub-detail content.playback.url — last resort
+          5. content.webp_path                   — derive MP4 from video cover
 
         Sources 3 and 4 cover the school's pre-release review gate
         (sub-info code 7001 "视频未到开放时间"), which scrubs top-level
@@ -478,11 +482,11 @@ class ICourseClient:
         CDN itself does not enforce the gate, so a signed URL from
         either source downloads successfully.
 
-        Returns the signed video URL string, or None if no source yields one.
+        Returns a signed URL, or None if no source yields one.
         """
         try:
             info = self.get_sub_info(course_id, sub_id)
-        except Exception as e:
+        except (RequestException, RuntimeError) as e:
             print(f"    sub-info unavailable for {sub_id} "
                   f"({type(e).__name__}); falling back to sub-detail")
             info = {}
@@ -528,7 +532,8 @@ class ICourseClient:
                     if isinstance(content_now, (int, str)):
                         now = int(content_now)
 
-        # Last resort: hit get-sub-detail (gate-free) directly.
+        # Look for a direct URL in get-sub-detail before deriving one.
+        detail = {}
         if not base_url:
             try:
                 detail = self.get_sub_detail(course_id, sub_id)
@@ -536,12 +541,23 @@ class ICourseClient:
                 playback = content.get("playback", {})
                 if playback and playback.get("url"):
                     base_url = playback["url"]
-            except Exception:
+            except (RequestException, RuntimeError):
                 pass
 
         if not base_url:
+            for source in (info, detail):
+                poster = (source.get("content") or {}).get("webp_path")
+                if (isinstance(poster, str) and "/Pic/" in poster
+                        and poster.endswith("_500k.webp")):
+                    base_url = poster.replace("/Pic/", "/", 1).removesuffix(
+                        "_500k.webp"
+                    ) + "_1920_1080.mp4"
+                    print(f"    Video source resolved from alternate metadata for {sub_id}")
+                    break
+
+        if not base_url:
             print(f"    No video URL found for {sub_id} (tried video_list, "
-                  f"playurl, content.playback, sub_detail)")
+                  f"playurl, content.playback, sub_detail, video cover)")
             return None
 
         return self.sign_video_url(base_url, now=now)

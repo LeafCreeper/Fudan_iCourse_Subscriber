@@ -15,8 +15,9 @@ log greps):
   C  schedule **next** lecture's prefetch (images always; audio only when
      the next lecture will actually be ASR-transcribed) so its download
      overlaps with the current lecture's ASR.
-  D  transcript: cached → official iCourse transcript (config-gated,
-     completeness-checked) → ASR.  For ASR, ``Scheduler.audio_downloader
+  D  transcript: cached → official iCourse transcript (when preferred) →
+     video ASR → official transcript if no video URL.  Official transcripts
+     are completeness-checked in either path.  For ASR, ``Scheduler.audio_downloader
      .get`` blocks for the ffmpeg spawn scheduled earlier, then
      ``Transcriber.transcribe_tail`` reads PCM from the disk file with
      tail-f semantics while ffmpeg keeps writing.
@@ -252,9 +253,9 @@ class LectureRunner:
                         sub_id: str) -> tuple[Optional[str], Optional[list]]:
         """Return (transcript, segments) or (None, None) on skip.
 
-        Tries the official iCourse transcript first — when available and
-        complete-enough (no >20 min silence gaps) it replaces the ASR
-        step entirely, saving ~5 min of CPU time per lecture.
+        Prefer video ASR by default, with official subtitles as the fallback
+        when no video URL exists.  The manual option still prefers official
+        subtitles before attempting video ASR.
         """
         if existing and existing.get("transcript"):
             self._reporter.info(
@@ -264,34 +265,12 @@ class LectureRunner:
             )
             return existing["transcript"], None
 
-        # Try official transcript before firing up ASR (config-gated).
+        # The manual option prefers official subtitles; both workflow types
+        # use the same fallback below if the video URL is unavailable.
         if config.USE_OFFICIAL_TRANSCRIPT:
-            try:
-                official = self._official_cache.pop(sub_id, None)
-                if official is None:
-                    official = self._client.get_transcript_segments(sub_id)
-                # Phase B registered the PPT rows, so the last screenshot
-                # offset is available as a duration lower bound for the
-                # tail-truncation check.
-                duration_hint = self._db.get_max_ppt_created_sec(sub_id)
-                if self._official_transcript_usable(
-                        official, duration_hint_s=duration_hint):
-                    text = " ".join(s["text"] for s in official)
-                    self._reporter.info(
-                        f"    Using official transcript "
-                        f"({len(text)} chars, {len(official)} segments)"
-                    )
-                    self._db.update_transcript(sub_id, text)
-                    # The audio may have been prefetched before we knew the
-                    # official transcript was usable — stop that download
-                    # now instead of letting it run until Phase H.
-                    self._release_audio(sub_id)
-                    return text, official
-            except Exception as e:
-                self._reporter.info(
-                    f"    [Official transcript] unavailable, falling back "
-                    f"to ASR: {type(e).__name__}: {e}"
-                )
+            official = self._try_official_transcript(sub_id)
+            if official is not None:
+                return official
 
         # Pull the audio handle.  ``schedule`` is idempotent — usually the
         # previous lecture already kicked it off (Phase C), but for the
@@ -305,10 +284,18 @@ class LectureRunner:
             self._db.update_error(sub_id, "transcribe", str(e))
             return None, None
         if handle is None:
+            if not config.USE_OFFICIAL_TRANSCRIPT:
+                self._reporter.info(
+                    "    No video URL, trying official transcript."
+                )
+                official = self._try_official_transcript(sub_id)
+                if official is not None:
+                    return official
             # AudioDownloader returns None when get_video_url() returned
-            # None — i.e. the lecture has no playable video.  Record an
-            # error so the lecture is retried (the video may appear later)
-            # but abandoned after max_errors instead of every day forever.
+            # None — i.e. the lecture has no playable video, and the
+            # official transcript is unavailable or incomplete.  Record an
+            # error so the lecture can be retried if either source appears
+            # later.
             # The "no_video" stage is a contract with the frontend, which
             # renders it as a gray "无视频" hint instead of a red failure.
             self._reporter.lecture_skip_no_video(
@@ -348,6 +335,37 @@ class LectureRunner:
 
         self._db.update_transcript(sub_id, transcript)
         return transcript, segments
+
+    def _try_official_transcript(
+            self, sub_id: str) -> tuple[str, list[dict]] | None:
+        """Fetch and save a usable official transcript for either source path."""
+        try:
+            segments = self._official_cache.pop(sub_id, None)
+            if segments is None:
+                segments = self._client.get_transcript_segments(sub_id)
+            # Phase B registered PPT rows, so the final screenshot gives a
+            # lower bound for detecting a missing subtitle tail.
+            duration_hint = self._db.get_max_ppt_created_sec(sub_id)
+            if not self._official_transcript_usable(
+                    segments, duration_hint_s=duration_hint):
+                self._reporter.info(
+                    "    [Official transcript] unavailable or incomplete"
+                )
+                return None
+            transcript = " ".join(s["text"] for s in segments)
+            self._reporter.info(
+                f"    Using official transcript "
+                f"({len(transcript)} chars, {len(segments)} segments)"
+            )
+            self._db.update_transcript(sub_id, transcript)
+            self._release_audio(sub_id)
+            return transcript, segments
+        except Exception as e:
+            self._reporter.info(
+                f"    [Official transcript] unavailable: "
+                f"{type(e).__name__}: {e}"
+            )
+            return None
 
     def _summarize(self, sub_id: str, course_title: str, transcript: str,
                    transcript_segments: list[dict] | None) -> Optional[str]:
