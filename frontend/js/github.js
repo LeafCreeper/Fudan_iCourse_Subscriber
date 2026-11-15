@@ -189,6 +189,16 @@ async function _putRepoSecret(owner, repo, token, secretName,
   throw new Error(`GitHub API error ${res.status}: ${body}`);
 }
 
+async function _getCourseIdsSecretInfo(owner, repo, token) {
+  const res = await fetch(
+    `${_GH_API}/repos/${owner}/${repo}/actions/secrets/COURSE_IDS`,
+    { headers: _ghHeaders(token) },
+  );
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`无法检查 COURSE_IDS Secret：${res.status}`);
+  return await res.json();
+}
+
 async function _setCourseIdsSecret(owner, repo, token, courseIds) {
   // Convenience: encrypts the comma-joined COURSE_IDS list against the
   // repo's public key and writes it as the ``COURSE_IDS`` secret in one
@@ -328,4 +338,5 @@ window.ICS.github = {
   getRepoPublicKey: _getRepoPublicKey,
   putRepoSecret: _putRepoSecret,
   setCourseIdsSecret: _setCourseIdsSecret,
+  getCourseIdsSecretInfo: _getCourseIdsSecretInfo,
 };

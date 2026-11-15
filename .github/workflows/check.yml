@@ -202,6 +202,10 @@ jobs:
             exit 0
           fi
 
+          # Persist even an empty list; the snapshot time lets the editor
+          # distinguish current data from an older encrypted database.
+          export SUBSCRIPTION_SNAPSHOT_AT=$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)
+          python scripts/sync_subscription_meta.py data/icourse.db
           AFTER=$(md5sum data/icourse.db | cut -d' ' -f1)
           if [ "$AFTER" = "${{ steps.db-before.outputs.hash }}" ]; then
             echo "Database unchanged, skipping commit."
@@ -227,6 +231,8 @@ jobs:
             python scripts/merge_db.py data/icourse.db data/remote.db
             DEPLOY_DB=data/remote.db
           fi
+
+          python scripts/sync_subscription_meta.py "$DEPLOY_DB"
 
           # Re-shard the merged DB and stage to a clean tree for force-push.
           rm -rf data/sharded_out

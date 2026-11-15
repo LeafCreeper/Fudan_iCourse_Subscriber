@@ -596,7 +596,8 @@
                   </div>
                 </label>
               </template>
-              <p x-show="subscribedCourses.length === 0" class="text-center text-gray-400 text-xs py-8">暂无</p>
+              <p x-show="subsLoading" class="text-center text-gray-400 text-xs py-8">正在检查订阅…</p>
+              <p x-show="!subsLoading && !subsStale && subscribedCourses.length === 0" class="text-center text-gray-400 text-xs py-8">暂无</p>
             </div>
           </div>
 
@@ -604,12 +605,12 @@
           <div class="flex flex-row md:flex-col justify-center items-center py-2 md:py-0 px-1 gap-2 md:gap-1">
             <button @click="moveToSubscribed()" title="加入订阅"
                     class="w-7 h-7 flex items-center justify-center rounded border border-gray-300 hover:bg-blue-50 text-gray-600 hover:text-blue-600 disabled:opacity-30"
-                    :disabled="subsSelMiddle.length === 0">
+                    :disabled="subsLoading || subsStale || subsSaving || subsSelMiddle.length === 0">
               <span class="text-lg leading-none inline-block rotate-90 md:rotate-0">◀</span>
             </button>
             <button @click="moveFromSubscribed()" title="移出订阅"
                     class="w-7 h-7 flex items-center justify-center rounded border border-gray-300 hover:bg-orange-50 text-gray-600 hover:text-orange-600 disabled:opacity-30"
-                    :disabled="subsSelLeft.length === 0">
+                    :disabled="subsLoading || subsStale || subsSaving || subsSelLeft.length === 0">
               <span class="text-lg leading-none inline-block rotate-90 md:rotate-0">▶</span>
             </button>
           </div>
@@ -703,7 +704,7 @@
 
         <!-- Action buttons -->
         <div class="mt-4 flex items-center justify-between gap-2">
-          <button @click="saveSubscriptions()" :disabled="subsSaving"
+          <button @click="saveSubscriptions()" :disabled="subsSaving || subsLoading || subsStale"
                   class="px-5 py-2.5 bg-blue-500 text-white rounded-lg text-sm font-medium hover:bg-blue-600 disabled:opacity-50 flex items-center gap-2">
             <div x-show="subsSaving" class="spinner !w-4 !h-4 !border-2 !border-white/30 !border-t-white"></div>
             <span x-text="subsSaving ? '加密上传中…' : '保存订阅到 Secret'"></span>
