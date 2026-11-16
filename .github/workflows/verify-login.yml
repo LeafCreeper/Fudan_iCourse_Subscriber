@@ -1,0 +1,32 @@
+name: Verify iCourse login
+on: workflow_dispatch
+permissions:
+  contents: read
+jobs:
+  login:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - run: pip install requests pycryptodome
+      - name: Verify school login and iCourse identity
+        env:
+          StuId: ${{ secrets.STUID }}
+          UISPsw: ${{ secrets.UISPSW }}
+          UIS_TOTP_SECRET: ${{ secrets.UIS_TOTP_SECRET }}
+        run: |
+          python -u - <<'PY'
+          from src.api.icourse import ICourseClient
+          from src.api.webvpn import WebVPNSession
+          vpn = WebVPNSession()
+          vpn.login()
+          vpn.authenticate_icourse()
+          if not ICourseClient(vpn).get_userinfo().get("id"):
+              raise SystemExit("No authenticated iCourse user identity")
+          print("Verified authenticated iCourse user identity")
+          PY
