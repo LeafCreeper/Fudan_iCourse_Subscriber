@@ -62,95 +62,13 @@ jobs:
           path: ~/.cache/rapidocr
           key: rapidocr-onnx-default-v1
 
-      - name: Fetch database from data branch
-        run: |
-          mkdir -p data
-          # Force-fetch (+refspec) so non-fast-forward updates from
-          # force-pushed data branches are picked up (shallow clone
-          # otherwise refuses to overwrite the stale tracking ref).
-          git fetch --depth=1 origin "+refs/heads/data:refs/remotes/origin/data" 2>/dev/null \
-            || { echo "No data branch, starting fresh."; exit 0; }
-          # Use ls-tree (reads tree directly) instead of cat-file
-          # (requires fetched blobs) in case the shallow clone hasn't
-          # fetched every blob object yet.
-          git ls-tree origin/data --name-only data/ | grep -q . \
-            || { echo "No database found on data branch, starting fresh."; exit 0; }
-          # Determine format from tree listing (ls-tree reads tree
-          # objects directly without needing the blobs fetched).
-          files=$(git ls-tree origin/data --name-only data/ | tr '\n' ' ')
-          echo "Data branch files: $files"
-          if echo "$files" | grep -q "icourse-index.enc"; then
-            mkdir -p data/sharded/shards
-            git show origin/data:data/icourse-index.enc > data/sharded/icourse-index.enc
-            shard_paths=$(git ls-tree -r --name-only origin/data | grep '^data/shards/' || true)
-            for path in $shard_paths; do
-              base=$(basename "$path")
-              git show "origin/data:$path" > "data/sharded/shards/$base"
-            done
-            echo "Loaded $(ls data/sharded/shards 2>/dev/null | wc -l) shard(s)."
-          elif echo "$files" | grep -q "icourse.db.gz.enc"; then
-            git show origin/data:data/icourse.db.gz.enc > data/icourse.db.gz.enc
-            echo "Loaded legacy compressed database."
-          elif echo "$files" | grep -q "icourse.db.enc"; then
-            git show origin/data:data/icourse.db.enc > data/icourse.db.enc
-            echo "Loaded legacy uncompressed database."
-          else
-            echo "No database found on data branch, starting fresh."
-          fi
-
-      - name: Decode database
-        if: hashFiles('data/sharded/icourse-index.enc', 'data/icourse.db.gz.enc', 'data/icourse.db.enc') != ''
+      - name: Restore database from data branch
         env:
           STUID: ${{ secrets.STUID }}
           UISPSW: ${{ secrets.UISPSW }}
           DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
-        run: |
-          if [ -f data/sharded/icourse-index.enc ]; then
-            # Sharded format — always v2.
-            python scripts/db_shard.py reassemble data/sharded data/icourse.db
-            echo "Reassembled sharded database."
-            exit 0
-          fi
-
-          # Legacy single-file path (one-time migration on first sharded run).
-          NEW_KEY=$(printf '%s' "ICSv2:${STUID}:${UISPSW}" | sha256sum | cut -d' ' -f1)
-          LEGACY_KEY="${STUID}${UISPSW}${DASHSCOPE_API_KEY}${SMTP_PASSWORD}"
-
-          decrypt_blob() {
-            local in_path="$1"
-            local out_path="$2"
-            if openssl enc -aes-256-cbc -d -pbkdf2 -iter 100000 \
-                 -in "$in_path" -out "$out_path" \
-                 -pass pass:"$NEW_KEY" 2>/dev/null; then
-              echo "v2"
-              return 0
-            fi
-            if openssl enc -aes-256-cbc -d -pbkdf2 \
-                 -in "$in_path" -out "$out_path" \
-                 -pass pass:"$LEGACY_KEY" 2>/dev/null; then
-              echo "legacy"
-              return 0
-            fi
-            return 1
-          }
-
-          if [ -f data/icourse.db.gz.enc ]; then
-            if VER=$(decrypt_blob data/icourse.db.gz.enc data/icourse.db.gz); then
-              gzip -d data/icourse.db.gz
-              echo "Legacy compressed DB decrypted ($VER)."
-            else
-              echo "::warning::Decryption failed (both keys). Starting with fresh database."
-              rm -f data/icourse.db data/icourse.db.gz
-            fi
-          elif [ -f data/icourse.db.enc ]; then
-            if VER=$(decrypt_blob data/icourse.db.enc data/icourse.db); then
-              echo "Legacy uncompressed DB decrypted ($VER)."
-            else
-              echo "::warning::Decryption failed (both keys). Starting with fresh database."
-              rm -f data/icourse.db
-            fi
-          fi
+        run: python scripts/restore_database.py --allow-empty
 
       - name: Record database state
         id: db-before
@@ -183,7 +101,7 @@ jobs:
           python -u main.py
 
       - name: Deploy database to data branch
-        if: always()
+        if: always() && steps.db-before.outcome == 'success'
         env:
           STUID: ${{ secrets.STUID }}
           UISPSW: ${{ secrets.UISPSW }}
