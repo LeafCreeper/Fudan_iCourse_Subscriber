@@ -59,35 +59,10 @@ jobs:
           fi
 
       - name: Delete lecture(s) or course(s)
-        run: |
-          SUB_IDS="${{ inputs.sub_ids }}"
-          IFS=',' read -ra CIDS <<< "${{ inputs.course_ids }}"
-          for cid in "${CIDS[@]}"; do
-            cid=$(echo "$cid" | xargs)
-            if [ -n "$SUB_IDS" ]; then
-              echo "Deleting specific lecture(s) from course $cid..."
-              IFS=',' read -ra SIDS <<< "$SUB_IDS"
-              for sid in "${SIDS[@]}"; do
-                sid=$(echo "$sid" | xargs)
-                echo "  Deleting lecture $sid..."
-                sqlite3 data/icourse.db "DELETE FROM ppt_pages WHERE sub_id='$sid'"
-                sqlite3 data/icourse.db "DELETE FROM lectures WHERE sub_id='$sid'"
-              done
-              remaining=$(sqlite3 data/icourse.db "SELECT COUNT(*) FROM lectures WHERE course_id='$cid'")
-              echo "  $remaining lecture(s) remaining for course $cid"
-              if [ "$remaining" -eq 0 ]; then
-                sqlite3 data/icourse.db "DELETE FROM courses WHERE course_id='$cid'"
-                echo "  Course $cid removed (no lectures left)"
-              fi
-            else
-              echo "Deleting entire course $cid..."
-              count=$(sqlite3 data/icourse.db "SELECT COUNT(*) FROM lectures WHERE course_id='$cid'")
-              sqlite3 data/icourse.db "DELETE FROM ppt_pages WHERE sub_id IN (SELECT sub_id FROM lectures WHERE course_id='$cid')"
-              sqlite3 data/icourse.db "DELETE FROM lectures WHERE course_id='$cid'"
-              sqlite3 data/icourse.db "DELETE FROM courses WHERE course_id='$cid'"
-              echo "  Removed $count lecture(s) for course $cid"
-            fi
-          done
+        env:
+          DELETE_COURSE_IDS: ${{ inputs.course_ids }}
+          DELETE_SUB_IDS: ${{ inputs.sub_ids }}
+        run: python scripts/delete_course_records.py data/icourse.db
 
       # NOTE: COURSE_IDS is deliberately NOT touched here.  GitHub's
       # Secrets API is write-only (values can never be read back), so a
@@ -122,6 +97,6 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add data/
-          git commit -q -m "chore: delete ${{ inputs.sub_ids != '' && 'lecture(s)' || 'course(s)' }} ${{ inputs.sub_ids || inputs.course_ids }}"
+          git commit -q -m "chore: delete requested course records"
           git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
           git push --force origin data
