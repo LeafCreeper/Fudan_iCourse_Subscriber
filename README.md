@@ -88,6 +88,12 @@
 
 首次运行会处理所有已有录播，后续只处理新增课次。
 
+### 可选：清理 Actions 运行记录
+
+公开 Fork 的 Actions 运行记录和日志可被他人查看。若希望在运行结束后自动删除本项目的工作流记录，进入 **Settings → Secrets and variables → Actions → Variables**，创建仓库变量 `AUTO_DELETE_ACTION_RUNS`，值设为 `true`。不设置时此功能关闭。
+
+清理工作流会在课程检查、单次运行、导出、删除课程和前端部署完成后，使用该仓库的 `GITHUB_TOKEN` 删除对应的运行记录；无需额外提供 PAT。它不会追溯删除启用前的记录，清理工作流自身的记录仍可见。运行期间的日志也可能被查看，因此仍应避免在日志中输出学号、课程内容或凭据。
+
 ## 前端页面（索引与查看）
 
 ![alt text](docs/frontend.png)

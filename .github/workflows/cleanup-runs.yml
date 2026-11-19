@@ -1,0 +1,25 @@
+name: Clean Up Action History
+
+on:
+  workflow_run:
+    workflows:
+      - iCourse Check
+      - Single Run
+      - Export Course Summaries
+      - Delete Course Data
+      - Deploy Frontend
+    types: [completed]
+
+permissions:
+  actions: write
+
+jobs:
+  cleanup:
+    if: ${{ vars.AUTO_DELETE_ACTION_RUNS == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete completed run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: gh api --method DELETE "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}"
