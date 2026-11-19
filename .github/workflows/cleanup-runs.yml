@@ -38,11 +38,14 @@ jobs:
           cutoff=$(date -u -d '3 days ago' +%Y-%m-%dT%H:%M:%SZ)
           runs=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/runs?per_page=100" \
             --jq '.workflow_runs[] | select(.status == "completed") | [.id, .created_at] | @tsv')
+          deleted=0
           while IFS=$'\t' read -r run_id created_at; do
             [ -n "$run_id" ] || continue
             [ "$run_id" != "$GITHUB_RUN_ID" ] || continue
             if [ "$CLEANUP_MODE" = clean_but_last_3_days ] && [[ "$created_at" > "$cutoff" || "$created_at" == "$cutoff" ]]; then
               continue
             fi
+            if [ "$deleted" -gt 0 ]; then sleep 1; fi
             gh api --method DELETE "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}"
+            deleted=$((deleted + 1))
           done <<< "$runs"
