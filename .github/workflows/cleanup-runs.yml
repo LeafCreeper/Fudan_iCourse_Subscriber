@@ -9,17 +9,40 @@ on:
       - Delete Course Data
       - Deploy Frontend
     types: [completed]
+  workflow_dispatch:
 
 permissions:
   actions: write
 
+concurrency:
+  group: action-history-cleanup
+  cancel-in-progress: false
+
 jobs:
   cleanup:
-    if: ${{ vars.AUTO_DELETE_ACTION_RUNS == 'true' }}
+    if: ${{ vars.AUTO_DELETE_ACTION_RUNS == 'clean_all' || vars.AUTO_DELETE_ACTION_RUNS == 'clean_but_last_3_days' || (vars.AUTO_DELETE_ACTION_RUNS == 'clean_this' && github.event_name == 'workflow_run') }}
     runs-on: ubuntu-latest
     steps:
-      - name: Delete completed run
+      - name: Delete workflow runs
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          RUN_ID: ${{ github.event.workflow_run.id }}
-        run: gh api --method DELETE "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}"
+          CLEANUP_MODE: ${{ vars.AUTO_DELETE_ACTION_RUNS }}
+          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          if [ "$CLEANUP_MODE" = clean_this ]; then
+            gh api --method DELETE "repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_RUN_ID}"
+            exit 0
+          fi
+
+          cutoff=$(date -u -d '3 days ago' +%Y-%m-%dT%H:%M:%SZ)
+          runs=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/runs?per_page=100" \
+            --jq '.workflow_runs[] | select(.status == "completed") | [.id, .created_at] | @tsv')
+          while IFS=$'\t' read -r run_id created_at; do
+            [ -n "$run_id" ] || continue
+            [ "$run_id" != "$GITHUB_RUN_ID" ] || continue
+            if [ "$CLEANUP_MODE" = clean_but_last_3_days ] && [[ "$created_at" > "$cutoff" || "$created_at" == "$cutoff" ]]; then
+              continue
+            fi
+            gh api --method DELETE "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}"
+          done <<< "$runs"
