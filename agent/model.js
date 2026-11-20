@@ -31,6 +31,19 @@ export function modelUrl(base) {
   return url;
 }
 
+function readFailure(error, signal) {
+  if (signal?.aborted) throw error;
+  throw new ModelRequestError("模型响应中断，请继续检索。", "connection");
+}
+
+async function* responseChunks(body, signal) {
+  try {
+    yield* body.pipeThrough(new TextDecoderStream());
+  } catch (error) {
+    readFailure(error, signal);
+  }
+}
+
 export async function requestModel(config, tools, messages, signal, maxTokens = 4096, onText = () => {}) {
   const destination = modelUrl(config.url);
   const limitKey = config.provider === "openai" ? "max_completion_tokens" : "max_tokens";
@@ -63,19 +76,21 @@ export async function requestModel(config, tools, messages, signal, maxTokens = 
     throw new ModelRequestError("模型端点返回 HTTP " + response.status + "。请检查配置或稍后重试。", "endpoint");
   }
   if (response.headers.get("content-type")?.includes("text/event-stream")) {
-    return readChatStream(response.body, onText).catch(error => {
-      if (signal?.aborted) throw error;
+    return readChatStream(responseChunks(response.body, signal), onText).catch(error => {
       if (error instanceof SyntaxError) throw new ModelRequestError("模型端点返回了无效的流式消息。", "protocol");
-      if (error instanceof TypeError) throw new ModelRequestError("模型响应中断，请继续检索。", "connection");
       throw error;
     });
   }
-  const result = await response.json().catch(() => {
-    throw new ModelRequestError("端点返回的内容不是有效 JSON。", "protocol");
+  const result = await response.json().catch(error => {
+    if (error instanceof SyntaxError) throw new ModelRequestError("端点返回的内容不是有效 JSON。", "protocol");
+    readFailure(error, signal);
   });
-  const choice = result.choices?.[0];
+  const choice = result?.choices?.[0];
   if (!choice?.message) throw new ModelRequestError("端点没有返回有效的模型消息。", "protocol");
   const { content, tool_calls, reasoning_content, refusal, extra_content } = choice.message;
+  if (tool_calls != null && !Array.isArray(tool_calls)) {
+    throw new ModelRequestError("模型端点返回了无效的工具调用列表。", "protocol");
+  }
   const message = { role: "assistant", content: content ?? null };
   if (reasoning_content !== undefined) message.reasoning_content = reasoning_content;
   if (tool_calls?.length) message.tool_calls = tool_calls;

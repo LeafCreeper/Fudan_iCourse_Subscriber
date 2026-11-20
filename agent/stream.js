@@ -1,6 +1,6 @@
 // Chat Completions splits tool arguments across deltas. The executor only
 // receives complete calls; the UI can render the text as it arrives.
-export async function readChatStream(body, onText) {
+export async function readChatStream(chunks, onText) {
   const message = { role: "assistant", content: null };
   const calls = [];
   let finish = null;
@@ -9,6 +9,9 @@ export async function readChatStream(body, onText) {
 
   function accept(data) {
     const event = JSON.parse(data);
+    if (!event || (event.choices != null && !Array.isArray(event.choices))) {
+      throw new SyntaxError("Invalid chat completion event");
+    }
     usage = event.usage ?? usage;
     const choice = event.choices?.[0];
     if (!choice) return;
@@ -21,7 +24,10 @@ export async function readChatStream(body, onText) {
     if (delta.reasoning_content) message.reasoning_content = (message.reasoning_content ?? "") + delta.reasoning_content;
     if (delta.extra_content !== undefined) message.extra_content = delta.extra_content;
     refusal += delta.refusal ?? "";
-    for (const fragment of delta.tool_calls ?? []) {
+    const fragments = delta.tool_calls ?? [];
+    if (!Array.isArray(fragments)) throw new SyntaxError("Invalid tool call list");
+    for (const fragment of fragments) {
+      if (!Number.isInteger(fragment?.index) || fragment.index < 0) throw new SyntaxError("Invalid tool call index");
       const item = calls[fragment.index] ??= { type: "function", function: { name: "", arguments: "" } };
       if (fragment.id) item.id = fragment.id;
       if (fragment.type) item.type = fragment.type;
@@ -33,7 +39,7 @@ export async function readChatStream(body, onText) {
 
   let buffer = "";
   let fields = [];
-  for await (const chunk of body.pipeThrough(new TextDecoderStream())) {
+  for await (const chunk of chunks) {
     buffer += chunk;
     const lines = buffer.split(/\r?\n/);
     buffer = lines.pop();
