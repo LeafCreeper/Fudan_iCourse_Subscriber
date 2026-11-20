@@ -141,21 +141,13 @@ export async function runTurn({
       results.set(key, value);
       if (value.ok && entry.name !== "read_lecture") memo.set(key, value);
     }
-    const resolved = entries.map(entry => {
+    const toolResults = entries.map(entry => {
       const value = entry.result ?? results.get(entry.key);
       if (value.ok) rememberResult(session, dataset, entry.name, value, entry.args);
       const duplicate = value.ok && entry.name === "read_lecture" && pending.get(entry.key) !== entry;
-      return { entry, value: duplicate ? referenceReadPages(value) : value };
+      return batchResult(entry.call, duplicate ? referenceReadPages(value) : value);
     });
-    session.messages.push(message, ...resolved.map(({ entry, value }) => batchResult(entry.call, value)));
-    const stalled = pending.size === 0 || resolved.every(({ entry, value }) => !value.ok ||
-      entry.name === "report_progress" ||
-      (entry.name === "read_lecture" && value.data.items.every(block => block.status === "already_read")));
-    const key = stalled ? JSON.stringify(entries.filter(entry => entry.name !== "report_progress")
-      .map(entry => entry.key ?? entry.name)) : "";
-    const repeated = stalled && key === lastStalledBatch;
-    lastStalledBatch = key;
-    return repeated;
+    session.messages.push(message, ...toolResults);
   }
 
   function stop(reason, detail) {
@@ -173,7 +165,6 @@ export async function runTurn({
     session.messages.push(appMessage("resume", "用户已选择继续检索。沿用已有证据，从尚未完成的查询继续。"));
   }
   let sentPages = new Map(Array.from(textBlocks(session.messages).values(), block => [readPageKey(block), block]));
-  let lastStalledBatch = "";
   session.run = { status: "running", steps: 0, reason: "", detail: "" };
   await persist();
 
@@ -224,10 +215,8 @@ export async function runTurn({
       }
       if (message.tool_calls?.length) {
         onText("");
-        const repeated = await processBatch(message);
-        if (repeated) stop("no_progress", "模型重复调用且没有取得新资料，已暂停检索。");
+        await processBatch(message);
         await persist();
-        if (session.run.status !== "running") break;
         continue;
       }
       if (finish !== "stop" || !message.content?.trim()) {

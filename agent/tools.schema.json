@@ -250,7 +250,7 @@
           "properties": {
             "code": {
               "type": "string",
-              "enum": ["UNKNOWN_TOOL","INVALID_ARGUMENT","NOT_FOUND","INVALID_CURSOR","STALE_CURSOR","DATA_UNAVAILABLE","BATCH_LIMIT","RESULT_TOO_LARGE","NO_PROGRESS","CANCELLED","INTERNAL_ERROR"],
+              "enum": ["UNKNOWN_TOOL","INVALID_ARGUMENT","NOT_FOUND","INVALID_CURSOR","STALE_CURSOR","DATA_UNAVAILABLE","BATCH_LIMIT","RESULT_TOO_LARGE","CANCELLED","INTERNAL_ERROR"],
               "description": "机器可读的错误代码。"
             },
             "message": {"type":"string","description":"一句话解释问题和可行的下一步。","minLength":1},
@@ -261,7 +261,7 @@
             {"if":{"properties":{"code":{"enum":["UNKNOWN_TOOL","INVALID_ARGUMENT","NOT_FOUND","RESULT_TOO_LARGE"]}}},"then":{"properties":{"recovery":{"const":"fix_arguments"}}}},
             {"if":{"properties":{"code":{"enum":["INVALID_CURSOR","STALE_CURSOR"]}}},"then":{"properties":{"recovery":{"const":"restart"}}}},
             {"if":{"properties":{"code":{"enum":["DATA_UNAVAILABLE","BATCH_LIMIT","INTERNAL_ERROR"]}}},"then":{"properties":{"recovery":{"const":"retry"}}}},
-            {"if":{"properties":{"code":{"enum":["NO_PROGRESS","CANCELLED"]}}},"then":{"properties":{"recovery":{"const":"resume"}}}}
+            {"if":{"properties":{"code":{"const":"CANCELLED"}}},"then":{"properties":{"recovery":{"const":"resume"}}}}
           ]
         }
       },
