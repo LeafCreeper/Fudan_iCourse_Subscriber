@@ -64,7 +64,7 @@ function snippet(hit, keywords) {
     snippet_end: start + to, ocr_page: page };
 }
 
-export function createCourseTools(reader, snapshot, cursors) {
+export function createCourseTools(reader, snapshot, cursors, dataset = snapshot) {
   const queryCache = new Map();
   const sourceCache = new Map();
   const cursorIds = new Map(Object.entries(cursors).map(([key, value]) => [JSON.stringify(value), key]));
@@ -163,7 +163,7 @@ export function createCourseTools(reader, snapshot, cursors) {
       }
       const end = Math.min(start + textPage, start + room, chars.length);
       const nextOffset = end < chars.length ? end : null;
-      const text_id = JSON.stringify([snapshot.split("@")[0], id, mode, source.source_version, start, end]);
+      const text_id = JSON.stringify([dataset, id, mode, source.source_version, start, end]);
       items.push({ status: "text", source, text_id, text: chars.slice(start, end).join(""),
         start, end, total_chars: chars.length, next_offset: nextOffset, next_cursor: nextOffset === null ? null : next(nextOffset),
         ocr_pages: mode === "ocr" ? segments.filter(span => span.start < end && span.end > start)
