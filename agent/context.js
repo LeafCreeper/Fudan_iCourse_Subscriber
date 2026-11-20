@@ -186,7 +186,11 @@ function shortCount(value) {
 export function contextStatus(session, tools, config) {
   const counts = { summary: 0, transcript: 0, ocr: 0 };
   for (const item of textBlocks(session.messages).values()) counts[item.source.mode]++;
-  return "context " + shortCount(inputSize(session.messages, tools).chars) + "/" +
-    shortCount(config.contextChars) + "; kept sum " + counts.summary + " trsc " +
-    counts.transcript + " ocr " + counts.ocr + "; compacted " + session.compacted;
+  const size = inputSize(session.messages, tools);
+  return {
+    line: "context " + shortCount(size.chars) + "/" + shortCount(config.contextChars) +
+      "; kept sum " + counts.summary + " trsc " + counts.transcript + " ocr " + counts.ocr +
+      "; compacted " + session.compacted,
+    percent: Math.min(100, Math.floor(usageRatio(size, config) * 100)),
+  };
 }

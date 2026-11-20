@@ -942,10 +942,28 @@
                       x-effect="agent.draft; agent.width; agent.closed; agent.desktop; view; $nextTick(() => agent.fitInput($el))"
                       @resize.window="agent.fitInput($el)"
                       @keydown.enter="agent.enter($event)"></textarea>
-            <button type="button" x-show="agent.running" @click="agent.stop()">停止</button>
-            <button type="submit" x-show="!agent.running" :disabled="!agent.configured || !agent.draft.trim()">发送</button>
+            <div class="agent-input-footer">
+              <div class="agent-context-meter">
+                <p class="agent-context" x-text="agent.context.line"></p>
+                <div class="agent-context-track" role="progressbar" aria-label="上下文占用"
+                     title="按字符预算和模型窗口中先达到的上限估算"
+                     aria-valuemin="0" aria-valuemax="100" :aria-valuenow="agent.context.percent">
+                  <span :data-level="agent.contextTone" :style="{ width: agent.context.percent + '%' }"></span>
+                </div>
+              </div>
+              <button class="agent-send" type="button" x-show="agent.running" @click="agent.stop()" aria-label="停止" title="停止">
+                <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <rect x="7" y="7" width="10" height="10" rx="2"/>
+                </svg>
+              </button>
+              <button class="agent-send" type="submit" x-show="!agent.running"
+                      :disabled="!agent.configured || !agent.draft.trim()" aria-label="发送" title="发送">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M12 19V5m-6 6 6-6 6 6"/>
+                </svg>
+              </button>
+            </div>
           </form>
-          <p class="agent-context" x-text="agent.statusLine"></p>
         </div>
       </section>
     </aside>

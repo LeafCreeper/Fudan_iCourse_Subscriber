@@ -80,7 +80,7 @@ export async function makeAgentUI(app) {
     activeId: active.id,
     title: active.title,
     draft: "",
-    statusLine: "",
+    context: { line: "", percent: 0 },
     notice: "",
     operationError: "",
     settingsNote: "",
@@ -93,6 +93,11 @@ export async function makeAgentUI(app) {
     connectMedia() {
       media.addEventListener("change", event => { this.desktop = event.matches; });
       this.sync();
+    },
+
+    get contextTone() {
+      const { percent } = this.context;
+      return percent >= 80 ? "high" : percent >= 60 ? "medium" : "low";
     },
 
     get configured() { return ready(this.config); },
@@ -122,7 +127,7 @@ export async function makeAgentUI(app) {
         .map(({ id, title }) => ({ id, title }));
       this.activeId = active.id;
       this.title = active.title;
-      this.statusLine = contextStatus(active, tools, this.config);
+      this.context = contextStatus(active, tools, this.config);
       this.notice = active.run?.detail ?? "";
       this.paused = active.run?.status === "paused";
     },
