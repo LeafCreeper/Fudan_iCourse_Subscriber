@@ -183,17 +183,23 @@ export async function runTurn({
   session.run = { status: "running", steps: 0, lastBatch: "", reason: "", detail: "" };
   await persist();
 
-  let triedOverflow = false;
+  let compactionFailed = false;
   let lastCompactionSize = 0;
+
+  async function tryCompact(size) {
+    if (compactionFailed || size <= lastCompactionSize) return false;
+    const compressed = await compact();
+    compactionFailed = !compressed;
+    if (compressed) lastCompactionSize = measure(session.messages).chars;
+    return compressed;
+  }
 
   async function nextReply() {
     try {
       return await callModel(session.messages, onText);
     } catch (error) {
-      if (!(error instanceof ModelRequestError) || error.kind !== "context" || triedOverflow) throw error;
-      triedOverflow = true;
-      if (!await compact()) throw error;
-      lastCompactionSize = measure(session.messages).chars;
+      if (!(error instanceof ModelRequestError) || error.kind !== "context") throw error;
+      if (!await tryCompact(measure(session.messages).chars)) throw error;
       return callModel(session.messages, onText);
     }
   }
@@ -202,9 +208,8 @@ export async function runTurn({
       const run = session.run;
       const size = measure(session.messages);
       const pressure = usageRatio(size, config);
-      if (pressure >= 0.8 && size.chars > lastCompactionSize) {
-        const compressed = await compact();
-        lastCompactionSize = measure(session.messages).chars;
+      if (pressure >= 0.8) {
+        const compressed = await tryCompact(size.chars);
         if (signal.aborted) break;
         if (!compressed && pressure >= 1) {
           stop("context", "上下文空间不足。可调大设置里的上下文预算，或开启新对话。");
