@@ -1,4 +1,5 @@
 import { modelTools, parseCall } from "./contract.js";
+import { readChatStream } from "./stream.js";
 
 export const presets = {
   custom: { label: "自定义", url: "", model: "", contextTokens: 0 },
@@ -30,11 +31,12 @@ export function modelUrl(base) {
   return url;
 }
 
-export async function requestModel(config, tools, messages, signal, maxTokens = 4096) {
+export async function requestModel(config, tools, messages, signal, maxTokens = 4096, onText = () => {}) {
   const destination = modelUrl(config.url);
   const limitKey = config.provider === "openai" ? "max_completion_tokens" : "max_tokens";
   const reasoning = config.provider === "deepseek" ? { thinking: { type: "disabled" } } :
     config.provider === "openai" && config.model.startsWith("gpt-5.6-") ? { reasoning_effort: "none" } : {};
+  const streamOptions = ["openai", "deepseek"].includes(config.provider) ? { stream_options: { include_usage: true } } : {};
   const response = await fetch(destination, {
     method: "POST",
     signal,
@@ -43,7 +45,8 @@ export async function requestModel(config, tools, messages, signal, maxTokens = 
       "Content-Type": "application/json",
       ...(config.apiKey ? { Authorization: "Bearer " + config.apiKey } : {}),
     },
-    body: JSON.stringify({ model: config.model, messages, tools, tool_choice: "auto", [limitKey]: maxTokens, ...reasoning }),
+    body: JSON.stringify({ model: config.model, messages, tools, tool_choice: "auto",
+      stream: true, [limitKey]: maxTokens, ...reasoning, ...streamOptions }),
   }).catch(error => {
     if (signal?.aborted) throw error;
     throw new ModelRequestError("无法访问模型端点。请检查地址、网络和浏览器跨域支持。", "connection");
@@ -58,6 +61,14 @@ export async function requestModel(config, tools, messages, signal, maxTokens = 
       throw new ModelRequestError("请求超出模型的上下文窗口。", "context");
     }
     throw new ModelRequestError("模型端点返回 HTTP " + response.status + "。请检查配置或稍后重试。", "endpoint");
+  }
+  if (response.headers.get("content-type")?.includes("text/event-stream")) {
+    return readChatStream(response.body, onText).catch(error => {
+      if (signal?.aborted) throw error;
+      if (error instanceof SyntaxError) throw new ModelRequestError("模型端点返回了无效的流式消息。", "protocol");
+      if (error instanceof TypeError) throw new ModelRequestError("模型响应中断，请继续检索。", "connection");
+      throw error;
+    });
   }
   const result = await response.json().catch(() => {
     throw new ModelRequestError("端点返回的内容不是有效 JSON。", "protocol");

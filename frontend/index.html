@@ -95,6 +95,10 @@
 
   <!-- Right actions -->
   <div class="flex items-center gap-1 ml-auto md:ml-4">
+    <button type="button" x-show="agent?.onReadingPage" class="px-2 py-1.5 rounded-lg text-sm text-blue-700 hover:bg-blue-50"
+            @click="agent.dock ? agent.togglePane() : openAgent()"
+            :aria-expanded="agent?.dock ? !agent.closed : null"
+            x-text="agent?.dock ? '问答栏' : '问答'"></button>
     <!-- Refresh (courses view) -->
     <button x-show="view === 'courses'" @click="refresh()"
             class="p-2 text-gray-400 hover:text-blue-600">
@@ -258,6 +262,7 @@
         <div x-show="setupTesting" class="spinner !w-4 !h-4 !border-2 !border-white/30 !border-t-white"></div>
         <span x-text="setupTesting ? 'Testing connection…' : 'Connect'"></span>
       </button>
+      <button type="button" @click="openAgent()" class="w-full text-sm text-blue-700 hover:underline">先打开课程问答</button>
     </div>
   </div>
 
@@ -879,7 +884,7 @@
         </div>
 
         <div class="agent-messages" aria-live="polite"
-             x-effect="agent.messageList.length; $nextTick(() => { $el.scrollTop = $el.scrollHeight })">
+             x-effect="agent.messageList.length; agent.liveText; $nextTick(() => { $el.scrollTop = $el.scrollHeight })">
           <div x-show="!agent.messageList.length" class="agent-empty">
             <h3 class="font-semibold text-gray-800">想了解哪门课？</h3>
             <p class="text-sm text-gray-500" x-show="agent.configured">可以问课程重点、查找老师讲过的内容，或比较不同课次。</p>
@@ -893,12 +898,23 @@
                 <div class="agent-answer prose" x-html="renderMd(message.text)"
                      x-effect="message.text; $nextTick(() => activateKaTeX($el))"></div>
               </template>
-              <template x-if="message.role !== 'assistant'">
+              <template x-if="message.role === 'tools'">
+                <details class="agent-tools" :open="agent.running && !agent.answerStarted && index > agent.lastQuestion">
+                  <summary x-text="'Used ' + message.calls.length + (message.calls.length === 1 ? ' tool' : ' tools')"></summary>
+                  <ul>
+                    <template x-for="(call, i) in message.calls" :key="i">
+                      <li x-text="agent.toolText(call)"></li>
+                    </template>
+                  </ul>
+                </details>
+              </template>
+              <template x-if="message.role === 'user' || message.role === 'progress'">
                 <p class="whitespace-pre-wrap" x-text="message.text"></p>
               </template>
             </div>
           </template>
-          <p x-show="agent.running" class="agent-working" role="status">正在处理…</p>
+          <p x-show="agent.liveText" class="agent-message whitespace-pre-wrap" x-text="agent.liveText" aria-live="off"></p>
+          <p x-show="agent.running && !agent.answerStarted" class="agent-working" role="status">正在处理…</p>
         </div>
 
         <div class="agent-compose">
@@ -910,7 +926,7 @@
           <form class="agent-input" @submit.prevent="agent.send()">
             <textarea x-model="agent.draft" rows="2" aria-label="输入课程问题"
                       placeholder="输入课程问题" :disabled="!agent.configured"
-                      @keydown.ctrl.enter.prevent="agent.send()" @keydown.meta.enter.prevent="agent.send()"></textarea>
+                      @keydown.enter="agent.enter($event)"></textarea>
             <button type="button" x-show="agent.running" @click="agent.stop()">停止</button>
             <button type="submit" x-show="!agent.running" :disabled="!agent.configured || !agent.draft.trim()">发送</button>
           </form>

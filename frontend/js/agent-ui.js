@@ -6,7 +6,9 @@ import { loadConfig, saveConfig, sessions } from "../agent/store.js";
 
 const paneKey = "ics_agent_pane";
 const readingViews = ["courses", "lectures", "detail"];
-const desktopQuery = "(min-width: 900px) and (orientation: landscape)";
+const desktopQuery = "(min-width: 760px), (min-width: 600px) and (pointer: fine)";
+const maxPaneWidth = () => window.innerWidth - 310;
+const quote = value => JSON.stringify(value);
 const ready = config => Boolean(config.url && config.model && (config.provider === "custom" || config.apiKey));
 const delay = () => new Promise(resolve => setTimeout(resolve, 0));
 
@@ -66,6 +68,9 @@ export async function makeAgentUI(app) {
     width: pane.width,
     closed: pane.closed,
     messageList: [],
+    liveText: "",
+    answerStarted: false,
+    lastQuestion: -1,
     conversations: [],
     activeId: active.id,
     title: active.title,
@@ -86,7 +91,8 @@ export async function makeAgentUI(app) {
     },
 
     get configured() { return ready(this.config); },
-    get dock() { return this.configured && this.desktop && readingViews.includes(app.view); },
+    get onReadingPage() { return readingViews.includes(app.view); },
+    get dock() { return this.desktop && this.onReadingPage; },
     get pageLabel() {
       if (!this.desktop) return "";
       const page = currentPage() ?? (app.view === "agent" ? lastPage : null);
@@ -102,6 +108,7 @@ export async function makeAgentUI(app) {
 
     sync() {
       this.messageList = active.visible.slice();
+      this.lastQuestion = active.visible.findLastIndex(item => item.role === "user");
       this.conversations = [...records.values()].sort((a, b) => b.updatedAt - a.updatedAt)
         .map(({ id, title }) => ({ id, title }));
       this.activeId = active.id;
@@ -201,6 +208,33 @@ export async function makeAgentUI(app) {
       }
     },
 
+    toolText({ name, args }) {
+      const cursor = args.cursor ? active.cursors[args.cursor]?.state : null;
+      if (name === "search_lecture") {
+        const terms = args.keywords.map(quote).join(" ");
+        return "Searching " + terms + " · " + args.modes.join("/") + (args.cursor ? " · next page" : "");
+      }
+      if (name === "read_lecture") {
+        const ids = args.lecture_ids ?? [cursor?.id];
+        const labels = ids.filter(Boolean).map(id => window.ICS.db.lectureTitle(id) ?? id);
+        const mode = args.mode ?? cursor?.mode ?? "summary";
+        return "Reading " + mode + (labels.length ? " of " + labels.map(quote).join(", ") : "") +
+          (args.cursor ? " · next page" : "");
+      }
+      if (name === "search_course") return "Searching courses for " + quote(args.query);
+      if (name === "read_course") {
+        const title = app.courses.find(course => course.course_id === args.course_id)?.title ?? args.course_id;
+        return "Reading lecture list for " + quote(title) + (args.cursor ? " · next page" : "");
+      }
+      return "Listing courses" + (args.page ? " · page " + (args.page + 1) : "");
+    },
+
+    enter(event) {
+      if (event.shiftKey || event.isComposing || event.keyCode === 229) return;
+      event.preventDefault();
+      if (!event.repeat) this.send();
+    },
+
     async send(resume = false) {
       const text = resume ? "" : this.draft.trim();
       if (this.running || !this.configured || (!text && !resume)) return;
@@ -219,10 +253,18 @@ export async function makeAgentUI(app) {
         await runTurn({
           session: active, spec, config: { ...this.config }, reader, dataset,
           snapshot: dataset + "@" + (app.commitSha ?? "empty"), page, text, signal: controller.signal,
+          onText: value => {
+            this.liveText = value;
+            this.answerStarted = Boolean(value.trim());
+          },
           publish: async record => {
+            if (!record.run && record.visible.at(-1)?.role === "assistant") {
+              this.liveText = "";
+              this.answerStarted = true;
+            }
             this.sync();
             await sessions.save(record);
-            if (this.messageList.at(-1)?.role === "progress") await delay();
+            if (this.messageList.at(-1)?.role === "tools") await delay();
           },
         });
       } catch (error) {
@@ -231,8 +273,10 @@ export async function makeAgentUI(app) {
         active.run = { status: "paused", detail: "本轮未完成，请检查浏览器控制台后重试。" };
         this.operationError = active.run.detail;
       } finally {
+        this.liveText = "";
         controller = null;
         this.running = false;
+        this.answerStarted = false;
         this.sync();
       }
     },
@@ -255,7 +299,7 @@ export async function makeAgentUI(app) {
       drag.moved = true;
       const width = window.innerWidth - event.clientX;
       this.closed = width < 195;
-      if (!this.closed) this.width = Math.min(window.innerWidth - 330, Math.max(300, width));
+      if (!this.closed) this.width = Math.min(maxPaneWidth(), Math.max(260, width));
     },
 
     endResize(event) {
@@ -266,9 +310,10 @@ export async function makeAgentUI(app) {
     },
 
     resizeBy(delta) {
+      const next = Math.min(maxPaneWidth(), this.width) + delta;
       if (this.closed && delta > 0) this.closed = false;
-      else if (this.width + delta < 300) this.closed = true;
-      else this.width = Math.min(window.innerWidth - 330, this.width + delta);
+      else if (next < 260) this.closed = true;
+      else this.width = Math.min(maxPaneWidth(), next);
       paneSave(this);
     },
   };

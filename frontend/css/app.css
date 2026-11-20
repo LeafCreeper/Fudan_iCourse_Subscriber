@@ -80,7 +80,7 @@ mark { background: #fef08a; padding: 0 2px; border-radius: 2px; }
   top: 3.5rem;
   align-self: start;
   z-index: 10;
-  width: min(var(--agent-width), calc(100vw - 330px));
+  width: min(var(--agent-width), calc(100vw - 310px));
   height: calc(100dvh - 3.5rem);
   border-left: 1px solid #dbe2ea;
 }
@@ -163,6 +163,10 @@ mark { background: #fef08a; padding: 0 2px; border-radius: 2px; }
   font-size: .92rem;
 }
 .agent-message[data-role="progress"], .agent-working, .agent-notice { color: #526176; font-size: .8rem; }
+.agent-tools { color: #526176; font-size: .8rem; }
+.agent-tools summary { cursor: pointer; }
+.agent-tools ul { margin: .35rem 0 0 .85rem; padding-left: .65rem; border-left: 1px solid #dbe2ea; }
+.agent-tools li { margin: .22rem 0; }
 .agent-answer.prose { font-size: .925rem; }
 .agent-answer.prose > :first-child { margin-top: 0; }
 .agent-actions { display: flex; align-items: center; gap: .45rem; flex-shrink: 0; }

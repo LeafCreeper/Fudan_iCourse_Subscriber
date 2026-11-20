@@ -516,6 +516,7 @@ function _orderValues(a, b) {
 
 window.ICS.db = {
   agentReader: _agentReader,
+  lectureTitle: id => _queryAll("SELECT sub_title FROM lectures WHERE sub_id = ?", [id])[0]?.sub_title,
   initDB: _initFromBytes,
   initEmpty: _initEmpty,
   attachShard: _attachShard,

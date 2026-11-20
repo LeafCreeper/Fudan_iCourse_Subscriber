@@ -18,6 +18,13 @@ function appendNote(session, text) {
   session.visible.push({ role: "progress", text });
 }
 
+function appendCalls(session, pending) {
+  const calls = [...pending.values()].map(({ name, args }) => ({ name, args }));
+  const last = session.visible.at(-1);
+  if (last?.role === "tools") session.visible[session.visible.length - 1] = { role: "tools", calls: [...last.calls, ...calls] };
+  else session.visible.push({ role: "tools", calls });
+}
+
 function verifiedResult(spec, name, result) {
   if (!validateDefinition(spec, name + "_output", result)) {
     throw new Error("Agent tool result does not match its contract: " + name);
@@ -26,7 +33,7 @@ function verifiedResult(spec, name, result) {
 }
 
 export async function runTurn({
-  session, config, spec, reader, dataset, snapshot, page, text, signal, publish, transport = requestModel,
+  session, config, spec, reader, dataset, snapshot, page, text, signal, publish, onText = () => {}, transport = requestModel,
 }) {
   const tools = modelTools(spec);
   const courseTools = createCourseTools(reader, snapshot, session.cursors, dataset);
@@ -35,8 +42,8 @@ export async function runTurn({
   const measure = messages => inputSize(messages, tools);
   const ratio = messages => usageRatio(measure(messages), config);
   const room = messages => contextRoom(measure(messages), config);
-  const callModel = async messages => {
-    const reply = await transport(config, tools, makeInput(messages), signal, outputTokens);
+  const callModel = async (messages, streamText) => {
+    const reply = await transport(config, tools, makeInput(messages), signal, outputTokens, streamText);
     const usage = reply.usage;
     if (usage?.prompt_tokens !== undefined) {
       session.lastUsage = {
@@ -136,10 +143,11 @@ export async function runTurn({
     const roomPerTool = Math.max(0, Math.floor((room([...session.messages, message]) - 1800) /
       (2 * Math.max(1, entries.length))));
     if (pending.size && !signal.aborted) {
-      const line = progress?.args.text ?? message.content?.trim().split("\n")[0].slice(0, 160);
+      const line = progress?.args.text ?? message.content?.trim();
       if (line) appendNote(session, line);
       if (progress) progress.result = verifiedResult(spec, "report_progress", ok({ shown: true }));
-      if (line) await notify();
+      appendCalls(session, pending);
+      await notify();
     } else if (progress) {
       progress.result = signal.aborted ? canceled() : limitReached ? paused() :
         invalid("进度消息需要至少一个会执行的同批数据调用。");
@@ -195,13 +203,13 @@ export async function runTurn({
 
   async function nextReply() {
     try {
-      return await callModel(session.messages);
+      return await callModel(session.messages, onText);
     } catch (error) {
       if (!(error instanceof ModelRequestError) || error.kind !== "context" || triedOverflow) throw error;
       triedOverflow = true;
       if (!await compact()) throw error;
       lastCompactionSize = measure(session.messages).chars;
-      return callModel(session.messages);
+      return callModel(session.messages, onText);
     }
   }
   try {
@@ -223,8 +231,8 @@ export async function runTurn({
       const reply = await nextReply();
       if (signal.aborted) break;
       const { message, finish, refusal } = reply;
-      if (finish === "length") {
-        stop("truncated", "模型输出超出单次长度，已保留当前检索进度。");
+      if (!finish || finish === "length") {
+        stop("truncated", "模型输出中断或超出单次长度，已保留当前检索进度。");
         break;
       }
       if (refusal || finish === "content_filter") {
@@ -232,6 +240,7 @@ export async function runTurn({
         break;
       }
       if (message.tool_calls?.length) {
+        onText("");
         const result = await processBatch(message, run);
         if (result.limitReached) stop("budget", "本段检索调用已用完，可以继续检索。");
         else if (result.repeated) stop("no_progress", "模型重复调用且没有取得新资料，已暂停检索。");
