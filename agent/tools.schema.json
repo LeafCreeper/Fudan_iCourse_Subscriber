@@ -368,7 +368,6 @@
       "additionalProperties": false,
       "properties": {
         "keywords": {"type":"array","description":"1 到 8 个去除首尾空白后非空且互异的关键词。","items":{"type":"string","description":"字面关键词或短语。","minLength":1,"maxLength":120},"minItems":1,"maxItems":8,"uniqueItems":true},
-        "operator": {"type":"string","enum":["and","or"],"description":"and 要求所有词出现在同一课次和同一资料类型中。or 匹配任一词。"},
         "modes": {"type":"array","description":"非空、无重复的搜索类型列表。","items":{"$ref":"#/$defs/Mode"},"minItems":1,"maxItems":3,"uniqueItems":true},
         "scope": {"type":"string","enum":["all","courses"],"description":"all 指全部可读课程。courses 只搜 course_ids 所列课程。"},
         "course_ids": {
@@ -376,8 +375,8 @@
         },
         "cursor": {"anyOf":[{"$ref":"#/$defs/Cursor"},{"type":"null"}],"description":"首页传 null。按需要传上次返回的 next_cursor 或 next_hit_cursor，其他查询参数保持一致。"}
       },
-      "required": ["keywords","operator","modes","scope","course_ids","cursor"],
-      "description": "在指定课程范围和资料类型中按字面关键词查找，返回课次及资料类型、命中次数、片段和位置。顶层 next_cursor 翻命中组，组内 next_hit_cursor 翻该组的命中片段。需要原话或更多上下文时用 read_lecture。",
+      "required": ["keywords","modes","scope","course_ids","cursor"],
+      "description": "在指定课程范围和资料类型中按字面关键词查找，命中任一关键词即可。返回课次及资料类型、命中次数、片段和位置。顶层 next_cursor 翻命中组，组内 next_hit_cursor 翻该组的命中片段。需要原话或更多上下文时用 read_lecture。",
       "allOf": [{"if":{"properties":{"scope":{"const":"courses"}}},"then":{"properties":{"course_ids":{"type":"array"}}},"else":{"properties":{"course_ids":{"type":"null"}}}}]
     },
     "search_lecture_output": {

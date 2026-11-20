@@ -487,10 +487,9 @@ function _agentReader() {
     ocrPending: subId => _queryAll(
       "SELECT 1 FROM ppt_pages WHERE sub_id = ? AND ocr_status IN ('pending', 'processing') LIMIT 1",
       [subId], db).length > 0,
-    candidates({ keywords, operator, modes, course_ids }) {
+    candidates({ keywords, modes, course_ids }) {
       const modeRank = { summary: 0, transcript: 1, ocr: 2 };
       const sqlCourse = course_ids ? " AND l.course_id IN (" + course_ids.map(() => "?").join(", ") + ")" : "";
-      const join = operator === "and" ? " AND " : " OR ";
       const found = modes.flatMap(mode => {
         const condition = mode === "ocr"
           ? "EXISTS (SELECT 1 FROM ppt_pages p WHERE p.sub_id = l.sub_id AND p.ocr_status = 'done' AND instr(lower(p.text), ?) > 0)"
@@ -499,7 +498,7 @@ function _agentReader() {
           "SELECT l.sub_id AS lecture_id, l.sub_title AS lecture_title, " +
           "c.title AS course_title, l.processed_at " +
           "FROM lectures l JOIN courses c ON c.course_id = l.course_id " +
-          "WHERE (" + keywords.map(() => condition).join(join) + ")" + sqlCourse,
+          "WHERE (" + keywords.map(() => condition).join(" OR ") + ")" + sqlCourse,
           [...keywords, ...(course_ids ?? [])], db,
         ).map(row => ({ ...row, mode, lecture_title: row.lecture_title || "", course_title: row.course_title || "" }));
       });

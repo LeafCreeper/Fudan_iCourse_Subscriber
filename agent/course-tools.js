@@ -175,10 +175,11 @@ export function createCourseTools(reader, snapshot, cursors, dataset = snapshot)
   }
 
   async function searchLecture(args) {
-    const { cursor, operator, modes, scope, course_ids } = args;
+    const { cursor, modes, scope, course_ids } = args;
     const keywords = args.keywords.map(word => word.trim());
     if (keywords.some(word => !word) || !unique(keywords.map(asciiLower))) return invalid("keywords 必须非空且互异。");
-    const key = JSON.stringify([keywords, operator, modes, scope, course_ids]);
+    // Keep the key used by older OR cursors saved in chat history.
+    const key = JSON.stringify([keywords, "or", modes, scope, course_ids]);
     const position = cursor === null ? ok({ kind: "groups", index: 0 }) : take(cursor, "search_lecture", key);
     if (!position.ok) return position;
     if (scope === "courses") {
@@ -186,7 +187,7 @@ export function createCourseTools(reader, snapshot, cursors, dataset = snapshot)
       if (course_ids.some(id => !ids.has(id))) return missing("搜索范围含未知课程 ID。");
     }
     const { kind, index } = position.data;
-    if (!queryCache.has(key)) queryCache.set(key, reader.candidates({ keywords: keywords.map(asciiLower), operator, modes, course_ids }));
+    if (!queryCache.has(key)) queryCache.set(key, reader.candidates({ keywords: keywords.map(asciiLower), modes, course_ids }));
     const candidates = queryCache.get(key);
     const makeGroup = async (row, from) => {
       const { source, segments } = await getSource(row.lecture_id, row.mode);
