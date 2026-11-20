@@ -77,8 +77,15 @@
       订阅
     </button>
 
-    <button type="button" @click="openAgent()" class="px-3 py-1.5 rounded-lg text-sm font-medium"
-            :class="view === 'agent' ? 'bg-blue-50 text-blue-600' : 'text-gray-500 hover:bg-gray-100'">问答</button>
+    <button type="button" @click="openAgent()"
+            class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
+            :class="view === 'agent' ? 'bg-blue-50 text-blue-600' : 'text-gray-500 hover:text-gray-800 hover:bg-gray-100'">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">
+        <path stroke-linecap="round" stroke-linejoin="round"
+              d="M7 9h10M7 13h7m7-6v9a2 2 0 0 1-2 2H9l-5 3v-3a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h15a2 2 0 0 1 2 2Z"/>
+      </svg>
+      问答
+    </button>
     <button @click="openSettings()"
             class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
             :class="view === 'settings'
@@ -155,7 +162,10 @@
 
     <button type="button" @click="openAgent()" class="flex flex-col items-center gap-0.5 px-2 sm:px-4 py-1"
             :class="view === 'agent' ? 'text-blue-600' : 'text-gray-400'">
-      <span class="text-xl leading-5" aria-hidden="true">？</span>
+      <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">
+        <path stroke-linecap="round" stroke-linejoin="round"
+              d="M7 9h10M7 13h7m7-6v9a2 2 0 0 1-2 2H9l-5 3v-3a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h15a2 2 0 0 1 2 2Z"/>
+      </svg>
       <span class="text-[10px]">问答</span>
     </button>
     <button @click="openSettings()" class="flex flex-col items-center gap-0.5 px-2 sm:px-4 py-1"
