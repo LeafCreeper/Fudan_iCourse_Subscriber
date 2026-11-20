@@ -115,7 +115,7 @@ export function createCourseTools(reader, snapshot, cursors, nextTextId) {
     return ok(pageOf(rows, args.page ?? 0, args.page_max ?? 30));
   }
 
-  function readCourse({ course_id, cursor }) {
+  function readCourse({ course_id, cursor = null }) {
     const position = cursor === null ? ok(0) : take(cursor, "read_course", course_id);
     if (!position.ok) return position;
     const course = reader.courses().find(row => row.course_id === course_id);
@@ -127,7 +127,7 @@ export function createCourseTools(reader, snapshot, cursors, nextTextId) {
   }
 
   function readLecture(args, room, sentPages) {
-    const { lecture_ids, mode, cursor } = args;
+    const { lecture_ids, mode, cursor = null } = args;
     const continuation = readCursorLocation(cursor);
     if (cursor !== null && !continuation) return invalidCursor();
     if (continuation && continuation.version !== version) return staleCursor();
@@ -171,7 +171,7 @@ export function createCourseTools(reader, snapshot, cursors, nextTextId) {
   }
 
   function searchLecture(args) {
-    const { cursor, modes, scope, course_ids } = args;
+    const { cursor = null, modes, scope, course_ids = null } = args;
     const keywords = args.keywords.map(word => word.trim());
     if (keywords.some(word => !word) || !unique(keywords.map(asciiLower))) return invalid("keywords 必须非空且互异。");
     const key = JSON.stringify([keywords, modes, scope, course_ids]);

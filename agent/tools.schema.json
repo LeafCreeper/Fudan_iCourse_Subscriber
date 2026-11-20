@@ -272,10 +272,9 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "page": {"anyOf":[{"type":"integer","description":"从 0 开始的页码。首页可传 null。续页传上次返回的 next_page。","minimum":0},{"type":"null"}]},
-        "page_max": {"anyOf":[{"type":"integer","description":"每页 1 到 100 门课程。null 使用 30。续页保持首次调用的页大小。","minimum":1,"maximum":100},{"type":"null"}]}
+        "page": {"description":"默认第 0 页。续页传上次返回的 next_page。","anyOf":[{"type":"integer","minimum":0},{"type":"null"}]},
+        "page_max": {"description":"默认每页 30 门，可设为 1 到 100。续页保持首次调用的页大小。","anyOf":[{"type":"integer","minimum":1,"maximum":100},{"type":"null"}]}
       },
-      "required": ["page","page_max"],
       "description": "浏览当前快照中全部可读课程，按最近更新时间倒序。返回课程基本信息、总数和 next_page。按课名或老师找课时用 search_course。"
     },
     "read_course_list_output": {"oneOf":[{"type":"object","additionalProperties":false,"properties":{"ok":{"const":true},"data":{"$ref":"#/$defs/CoursePage"}},"required":["ok","data"]},{"$ref":"#/$defs/Error"}]},
@@ -284,18 +283,18 @@
       "additionalProperties": false,
       "properties": {
         "query": {"type":"string","minLength":1,"maxLength":120,"pattern":"\\S","description":"课名或老师姓名中的一个字面词或短语。去掉首尾空白后须非空，翻页时保持查询词。"},
-        "page": {"anyOf":[{"type":"integer","description":"从 0 开始的页码。首页可传 null。续页传上次返回的 next_page。","minimum":0},{"type":"null"}]},
-        "page_max": {"anyOf":[{"type":"integer","description":"每页 1 到 100 门课程。null 使用 30。续页保持首次调用的页大小。","minimum":1,"maximum":100},{"type":"null"}]}
+        "page": {"description":"默认第 0 页。续页传上次返回的 next_page。","anyOf":[{"type":"integer","minimum":0},{"type":"null"}]},
+        "page_max": {"description":"默认每页 30 门，可设为 1 到 100。续页保持首次调用的页大小。","anyOf":[{"type":"integer","minimum":1,"maximum":100},{"type":"null"}]}
       },
-      "required": ["query","page","page_max"],
+      "required": ["query"],
       "description": "按课名或老师姓名的字面片段查找课程。返回匹配课程的 ID、基本信息、匹配总数及 next_page。已知课程 ID 且需要查看课次菜单时用 read_course。"
     },
     "search_course_output": {"oneOf":[{"type":"object","additionalProperties":false,"properties":{"ok":{"const":true},"data":{"$ref":"#/$defs/CoursePage"}},"required":["ok","data"]},{"$ref":"#/$defs/Error"}]},
     "read_course_input": {
       "type": "object",
       "additionalProperties": false,
-      "properties": {"course_id":{"type":"string","description":"课程 ID。首页与续页均传同一个值。","minLength":1},"cursor":{"anyOf":[{"$ref":"#/$defs/Cursor"},{"type":"null"}],"description":"首页传 null。翻页时传上次返回的 next_cursor，course_id 保持不变。"}},
-      "required": ["course_id","cursor"],
+      "properties": {"course_id":{"type":"string","description":"课程 ID。首页与续页均传同一个值。","minLength":1},"cursor":{"anyOf":[{"$ref":"#/$defs/Cursor"},{"type":"null"}],"description":"首页省略。翻页时传上次返回的 next_cursor，course_id 保持不变。"}},
+      "required": ["course_id"],
       "description": "读取指定课程的基本信息和按时间升序排列的课次，返回课次 ID、摘要节选与 next_cursor。适合已知课程 ID、尚未确定课次的情况。"
     },
     "read_course_output": {
@@ -326,17 +325,16 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "lecture_ids": {"anyOf":[{"type":"array","description":"首次最多四个不同课次。使用 cursor 时传 null。","items":{"type":"string","description":"课次 ID。","minLength":1},"minItems":1,"maxItems":4,"uniqueItems":true},{"type":"null"}]},
-        "mode": {"anyOf":[{"$ref":"#/$defs/Mode"},{"type":"null"}],"description":"首次为 null 时使用 summary。续页传 null。"},
-        "cursor": {"anyOf":[{"$ref":"#/$defs/Cursor"},{"type":"null"}],"description":"从头读传 null。翻页用 next_cursor，定位搜索命中用 read_cursor。使用游标时其余字段传 null。"}
+        "lecture_ids": {"description":"从头读时传一到四个不同的课次 ID。","anyOf":[{"type":"array","items":{"type":"string","description":"课次 ID。","minLength":1},"minItems":1,"maxItems":4,"uniqueItems":true},{"type":"null"}]},
+        "mode": {"anyOf":[{"$ref":"#/$defs/Mode"},{"type":"null"}],"description":"从头读时默认 summary。"},
+        "cursor": {"anyOf":[{"$ref":"#/$defs/Cursor"},{"type":"null"}],"description":"从头读时省略。翻页用 next_cursor，定位搜索命中用 read_cursor；只传 cursor 即可。"}
       },
-      "required": ["lecture_ids","mode","cursor"],
       "description": "读取已知课次的摘要、转录或 OCR 原文。用 next_cursor 续读，用搜索命中的 read_cursor 从命中附近开始读。already_read 表示正文已在上下文中，使用返回的 text_id 查阅。",
       "allOf": [
         {
-          "if": {"properties":{"cursor":{"type":"null"}}},
-          "then": {"properties":{"lecture_ids":{"type":"array"}}},
-          "else": {"properties":{"lecture_ids":{"type":"null"},"mode":{"type":"null"}}}
+          "if": {"required":["cursor"],"properties":{"cursor":{"type":"string"}}},
+          "then": {"properties":{"lecture_ids":{"type":"null"},"mode":{"type":"null"}}},
+          "else": {"required":["lecture_ids"],"properties":{"lecture_ids":{"type":"array"}}}
         }
       ]
     },
@@ -367,13 +365,14 @@
         "modes": {"type":"array","description":"非空、无重复的搜索类型列表。","items":{"$ref":"#/$defs/Mode"},"minItems":1,"maxItems":3,"uniqueItems":true},
         "scope": {"type":"string","enum":["all","courses"],"description":"all 指全部可读课程。courses 只搜 course_ids 所列课程。"},
         "course_ids": {
-          "anyOf": [{"type":"array","description":"scope=courses 时必填，非空且无重复。scope=all 时传 null。","items":{"type":"string","description":"课程 ID。","minLength":1},"minItems":1,"maxItems":100,"uniqueItems":true},{"type":"null"}]
+          "description":"scope=courses 时必填，非空且无重复。scope=all 时省略。",
+          "anyOf": [{"type":"array","items":{"type":"string","description":"课程 ID。","minLength":1},"minItems":1,"maxItems":100,"uniqueItems":true},{"type":"null"}]
         },
-        "cursor": {"anyOf":[{"$ref":"#/$defs/Cursor"},{"type":"null"}],"description":"首页传 null。按需要传上次返回的 next_cursor 或 next_hit_cursor，其他查询参数保持一致。"}
+        "cursor": {"anyOf":[{"$ref":"#/$defs/Cursor"},{"type":"null"}],"description":"首页省略。按需要传上次返回的 next_cursor 或 next_hit_cursor，其他查询参数保持一致。"}
       },
-      "required": ["keywords","modes","scope","course_ids","cursor"],
+      "required": ["keywords","modes","scope"],
       "description": "在指定课程范围和资料类型中按字面关键词查找，命中任一关键词即可。返回课次及资料类型、命中次数和片段。顶层 next_cursor 翻命中组，组内 next_hit_cursor 翻片段，命中的 read_cursor 交给 read_lecture 定位原文。",
-      "allOf": [{"if":{"properties":{"scope":{"const":"courses"}}},"then":{"properties":{"course_ids":{"type":"array"}}},"else":{"properties":{"course_ids":{"type":"null"}}}}]
+      "allOf": [{"if":{"properties":{"scope":{"const":"courses"}}},"then":{"required":["course_ids"],"properties":{"course_ids":{"type":"array"}}},"else":{"properties":{"course_ids":{"type":"null"}}}}]
     },
     "search_lecture_output": {
       "oneOf": [

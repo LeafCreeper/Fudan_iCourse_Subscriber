@@ -102,7 +102,7 @@ export async function requestModel(config, tools, messages, signal, maxTokens = 
 // Uses only a synthetic prompt, and tests the round trip, not just ordinary chat.
 export async function testConnection(config, spec, signal) {
   const tools = modelTools(spec);
-  const messages = [{ role: "user", content: 'Call search_course with query "Ping course" and null for page and page_max. After getting the result, reply pong.' }];
+  const messages = [{ role: "user", content: 'Call search_course with {"query":"Ping course"}. After getting the result, reply pong.' }];
   const reply = await requestModel(config, tools, messages, signal, 2048);
   const call = reply.message.tool_calls?.[0];
   if (reply.message.tool_calls?.length !== 1 || call.function.name !== "search_course" ||

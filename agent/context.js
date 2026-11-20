@@ -61,7 +61,7 @@ export function rememberResult(session, dataset, name, result, args) {
   } else if (name === "read_course") {
     const id = data.course.course_id;
     session.seenPages[pageKey(dataset, "course", id)] = true;
-    if (args.cursor === null) {
+    if (!args.cursor) {
       session.seenPages[pageKey(dataset, "lecture_menu", id)] = true;
     }
   } else if (name === "read_course_list" || name === "search_course") {
@@ -82,7 +82,7 @@ export function appendPage(session, dataset, page, reader, tools, textRoom = 200
     return { kind: "course_list" };
   }
   if (page.view === "lectures") {
-    const result = tools.run("read_course", { course_id: page.courseId, cursor: null });
+    const result = tools.run("read_course", { course_id: page.courseId });
     if (!result.ok) return null;
     appendPart(session, dataset, "course", page.courseId, result.data.course);
     appendPart(session, dataset, "lecture_menu", page.courseId, menuContents(result.data));
@@ -97,7 +97,7 @@ export function appendPage(session, dataset, page, reader, tools, textRoom = 200
   const key = pageKey(dataset, "page_text", row.sub_id);
   if (row.summary && textRoom > 0 && !session.seenPages[key]) {
     const response = tools.run("read_lecture", {
-      lecture_ids: [row.sub_id], mode: "summary", cursor: null,
+      lecture_ids: [row.sub_id],
     }, textRoom);
     session.messages.push(appMessage("page_text", response.data.items[0]));
     session.seenPages[key] = true;
