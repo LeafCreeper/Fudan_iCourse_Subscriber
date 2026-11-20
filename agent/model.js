@@ -36,9 +36,9 @@ function readFailure(error, signal) {
   throw new ModelRequestError("模型响应中断，请继续检索。", "connection");
 }
 
-async function* responseChunks(body, signal) {
+async function* responseChunks(chunks, signal) {
   try {
-    yield* body.pipeThrough(new TextDecoderStream());
+    yield* chunks;
   } catch (error) {
     readFailure(error, signal);
   }
@@ -49,7 +49,6 @@ export async function requestModel(config, tools, messages, signal, maxTokens = 
   const limitKey = config.provider === "openai" ? "max_completion_tokens" : "max_tokens";
   const reasoning = config.provider === "deepseek" ? { thinking: { type: "disabled" } } :
     config.provider === "openai" && config.model.startsWith("gpt-5.6-") ? { reasoning_effort: "none" } : {};
-  const streamOptions = ["openai", "deepseek"].includes(config.provider) ? { stream_options: { include_usage: true } } : {};
   const response = await fetch(destination, {
     method: "POST",
     signal,
@@ -59,7 +58,7 @@ export async function requestModel(config, tools, messages, signal, maxTokens = 
       ...(config.apiKey ? { Authorization: "Bearer " + config.apiKey } : {}),
     },
     body: JSON.stringify({ model: config.model, messages, tools, tool_choice: "auto",
-      stream: true, [limitKey]: maxTokens, ...reasoning, ...streamOptions }),
+      stream: true, [limitKey]: maxTokens, ...reasoning }),
   }).catch(error => {
     if (signal?.aborted) throw error;
     throw new ModelRequestError("无法访问模型端点。请检查地址、网络和浏览器跨域支持。", "connection");
@@ -76,7 +75,9 @@ export async function requestModel(config, tools, messages, signal, maxTokens = 
     throw new ModelRequestError("模型端点返回 HTTP " + response.status + "。请检查配置或稍后重试。", "endpoint");
   }
   if (response.headers.get("content-type")?.includes("text/event-stream")) {
-    return readChatStream(responseChunks(response.body, signal), onText).catch(error => {
+    if (!response.body) throw new ModelRequestError("模型端点没有返回流式消息。", "protocol");
+    const chunks = response.body.pipeThrough(new TextDecoderStream());
+    return readChatStream(responseChunks(chunks, signal), onText).catch(error => {
       if (error instanceof SyntaxError) throw new ModelRequestError("模型端点返回了无效的流式消息。", "protocol");
       throw error;
     });
@@ -95,7 +96,7 @@ export async function requestModel(config, tools, messages, signal, maxTokens = 
   if (reasoning_content !== undefined) message.reasoning_content = reasoning_content;
   if (tool_calls?.length) message.tool_calls = tool_calls;
   if (extra_content !== undefined) message.extra_content = extra_content;
-  return { message, finish: choice.finish_reason, usage: result.usage, refusal };
+  return { message, finish: choice.finish_reason, refusal };
 }
 
 // Uses only a synthetic prompt, and tests the round trip, not just ordinary chat.

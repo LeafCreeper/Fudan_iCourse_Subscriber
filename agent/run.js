@@ -23,13 +23,6 @@ function appendCalls(session, pending) {
   else session.visible.push({ role: "tools", calls });
 }
 
-function verifiedResult(spec, name, result) {
-  if (!validateDefinition(spec, name + "_output", result)) {
-    throw new Error("Agent tool result does not match its contract: " + name);
-  }
-  return result;
-}
-
 function referenceReadPages(result) {
   return ok({ items: result.data.items.map(block => block.status === "text" ?
     { status: "already_read", text_id: block.text_id, next_cursor: block.next_cursor } : block) });
@@ -47,17 +40,8 @@ export async function runTurn({
   const ratio = messages => usageRatio(measure(messages), config);
   // Leave one share for tool metadata and the next model request.
   const textRoom = (count = 1) => Math.max(0, Math.floor(contextRoom(measure(session.messages), config) / (count + 1)));
-  const callModel = async (messages, streamText) => {
-    const reply = await transport(config, tools, makeInput(messages), signal, outputTokens, streamText);
-    const usage = reply.usage;
-    if (usage?.prompt_tokens !== undefined) {
-      session.lastUsage = {
-        input: usage.prompt_tokens,
-        cached: usage.prompt_tokens_details?.cached_tokens ?? usage.prompt_cache_hit_tokens ?? null,
-      };
-    }
-    return reply;
-  };
+  const callModel = (messages, streamText) =>
+    transport(config, tools, makeInput(messages), signal, outputTokens, streamText);
   const notify = () => publish(session);
   const persist = async () => {
     session.updatedAt = Date.now();
@@ -87,7 +71,7 @@ export async function runTurn({
             else if (!parsed.data.ids.every(id => blocks.has(id))) value = invalid("只能选择上下文中已出现的 text_id。");
             else {
               kept = parsed.data.ids;
-              value = verifiedResult(spec, "retain_texts", ok({ kept_ids: kept }));
+              value = ok({ kept_ids: kept });
             }
             debug.calls.push({ arguments: call.function.arguments, result: value });
           }
@@ -145,7 +129,7 @@ export async function runTurn({
     if (pending.size && !signal.aborted) {
       const line = progress?.args.text ?? message.content?.trim();
       if (line) appendNote(session, line);
-      if (progress) progress.result = verifiedResult(spec, "report_progress", ok({ shown: true }));
+      if (progress) progress.result = ok({ shown: true });
       appendCalls(session, pending);
       await notify();
     } else if (progress) {
@@ -153,8 +137,7 @@ export async function runTurn({
     }
     const results = new Map();
     for (const [key, entry] of pending) {
-      const value = signal.aborted ? canceled() :
-        verifiedResult(spec, entry.name, courseTools.run(entry.name, entry.args, roomPerTool, sentPages));
+      const value = signal.aborted ? canceled() : courseTools.run(entry.name, entry.args, roomPerTool, sentPages);
       results.set(key, value);
       if (value.ok && entry.name !== "read_lecture") memo.set(key, value);
     }

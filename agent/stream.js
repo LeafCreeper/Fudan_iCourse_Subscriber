@@ -4,7 +4,6 @@ export async function readChatStream(chunks, onText) {
   const message = { role: "assistant", content: null };
   const calls = [];
   let finish = null;
-  let usage;
   let refusal = "";
 
   function accept(data) {
@@ -12,7 +11,6 @@ export async function readChatStream(chunks, onText) {
     if (!event || (event.choices != null && !Array.isArray(event.choices))) {
       throw new SyntaxError("Invalid chat completion event");
     }
-    usage = event.usage ?? usage;
     const choice = event.choices?.[0];
     if (!choice) return;
     finish = choice.finish_reason ?? finish;
@@ -53,5 +51,5 @@ export async function readChatStream(chunks, onText) {
     }
   }
   if (calls.length) message.tool_calls = calls;
-  return { message, finish, usage, refusal };
+  return { message, finish, refusal };
 }
