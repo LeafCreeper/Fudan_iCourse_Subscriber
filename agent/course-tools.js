@@ -3,6 +3,8 @@ import { asciiLower, countChars, failure, invalid, ok } from "./contract.js";
 const textPage = 20000;
 const missing = message => failure("NOT_FOUND", message, "fix_arguments");
 const oversized = () => failure("RESULT_TOO_LARGE", "本轮留给原文的空间不足。请拆分读取。", "fix_arguments");
+const invalidCursor = () => failure("INVALID_CURSOR", "请使用同一工具和查询参数返回的游标。", "restart");
+const staleCursor = () => failure("STALE_CURSOR", "课程数据已更新，请重新查询。", "restart");
 const unique = values => new Set(values).size === values.length;
 export const readPageKey = ({ source, start }) =>
   JSON.stringify([source.course_id, source.lecture_id, source.mode, start]);
@@ -59,28 +61,26 @@ function snippet(hit, keywords) {
     start: start + from, ocr_page: page };
 }
 
+export function readCursorLocation(cursor) {
+  const match = /^r:(\d+):(summary|transcript|ocr):(\d+):(.+)$/.exec(cursor);
+  return match && { version: match[1], mode: match[2], start: Number(match[3]), id: match[4] };
+}
+
 export function createCourseTools(reader, snapshot, cursors, nextTextId) {
   const queryCache = new Map();
   const sourceCache = new Map();
-  const cursorIds = new Map(Object.entries(cursors).map(([key, value]) => [JSON.stringify(value), key]));
+  const knownSnapshot = cursors.snapshots.indexOf(snapshot);
+  const version = String(knownSnapshot === -1 ? cursors.snapshots.push(snapshot) - 1 : knownSnapshot);
+  const readCursor = (id, mode, start) => "r:" + version + ":" + mode + ":" + start + ":" + id;
 
   function issue(tool, key, state) {
-    const info = { tool, key, snapshot, state };
-    const serialized = JSON.stringify(info);
-    if (!cursorIds.has(serialized)) {
-      const id = crypto.randomUUID();
-      cursors[id] = info;
-      cursorIds.set(serialized, id);
-    }
-    return cursorIds.get(serialized);
+    return String(cursors.pages.push({ tool, key, version, state }) - 1);
   }
 
-  function take(id, tool, key = null) {
-    const value = Object.hasOwn(cursors, id) ? cursors[id] : null;
-    if (!value || value.tool !== tool || (key !== null && key !== value.key)) {
-      return failure("INVALID_CURSOR", "请使用同一工具和查询参数返回的游标。", "restart");
-    }
-    if (value.snapshot !== snapshot) return failure("STALE_CURSOR", "课程数据已更新，请重新查询。", "restart");
+  function take(id, tool, key) {
+    const value = cursors.pages[id];
+    if (!value || value.tool !== tool || value.key !== key) return invalidCursor();
+    if (value.version !== version) return staleCursor();
     return ok(value.state);
   }
 
@@ -128,9 +128,10 @@ export function createCourseTools(reader, snapshot, cursors, nextTextId) {
 
   function readLecture(args, room, sentPages) {
     const { lecture_ids, mode, cursor } = args;
-    const continuation = cursor === null ? null : take(cursor, "read_lecture");
-    if (continuation && !continuation.ok) return continuation;
-    const targets = continuation ? [continuation.data] : lecture_ids.map(id => ({
+    const continuation = readCursorLocation(cursor);
+    if (cursor !== null && !continuation) return invalidCursor();
+    if (continuation && continuation.version !== version) return staleCursor();
+    const targets = continuation ? [continuation] : lecture_ids.map(id => ({
       id, mode: mode ?? "summary", start: 0,
     }));
     const items = [];
@@ -142,7 +143,8 @@ export function createCourseTools(reader, snapshot, cursors, nextTextId) {
         continue;
       }
       const { chars, source, segments } = result;
-      const next = position => issue("read_lecture", "", { id, mode, start: position });
+      if (start >= chars.length) return invalidCursor();
+      const next = position => readCursor(id, mode, position);
       const key = readPageKey({ source, start });
       const original = sentPages?.get(key);
       if (original && chars.slice(start, original.end).join("") === original.text) {
@@ -189,7 +191,7 @@ export function createCourseTools(reader, snapshot, cursors, nextTextId) {
       const next = from + 5;
       const matches = hits.slice(from, next).map(hit => {
         const { start, ...match } = snippet(hit, keywords);
-        return { ...match, read_cursor: issue("read_lecture", "", { id, mode, start }) };
+        return { ...match, read_cursor: readCursor(id, mode, start) };
       });
       return { source, course_title: row.course_title, lecture_title: row.lecture_title,
         hit_count: hits.length, keyword_counts: counts, hits: matches,

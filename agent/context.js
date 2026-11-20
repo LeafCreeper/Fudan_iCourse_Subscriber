@@ -9,7 +9,8 @@ export function compressionInput(messages, blocks) {
 }
 export const newSession = () => ({
   id: crypto.randomUUID(), title: "新对话", updatedAt: Date.now(),
-  visible: [], messages: [], seenPages: {}, cursors: {}, nextTextId: 0, compacted: 0, compressions: [], run: null,
+  visible: [], messages: [], seenPages: {}, cursors: { snapshots: [], pages: [] },
+  nextTextId: 0, compacted: 0, compressions: [], run: null,
 });
 
 export function inputSize(messages, tools) {
