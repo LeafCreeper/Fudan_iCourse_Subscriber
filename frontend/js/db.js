@@ -516,7 +516,10 @@ function _orderValues(a, b) {
 
 window.ICS.db = {
   agentReader: _agentReader,
-  lectureTitle: id => _queryAll("SELECT sub_title FROM lectures WHERE sub_id = ?", [id])[0]?.sub_title,
+  lectureSource: id => _queryAll(
+    "SELECT l.sub_title AS lecture_title, c.title AS course_title, c.teacher " +
+    "FROM lectures l JOIN courses c ON c.course_id = l.course_id WHERE l.sub_id = ?", [id],
+  )[0],
   initDB: _initFromBytes,
   initEmpty: _initEmpty,
   attachShard: _attachShard,

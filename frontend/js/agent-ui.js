@@ -4,6 +4,7 @@ import { defaultConfig, ModelRequestError, modelUrl, presets, testConnection } f
 import { runTurn } from "../agent/run.js";
 import { loadConfig, saveConfig, sessions } from "../agent/store.js";
 
+const citationViews = { summary: "summary", transcript: "transcript", ocr: "ppt" };
 const paneKey = "ics_agent_pane";
 const readingViews = ["courses", "lectures", "detail"];
 const desktopQuery = "(min-width: 760px), (min-width: 600px) and (pointer: fine)";
@@ -216,7 +217,7 @@ export async function makeAgentUI(app) {
       }
       if (name === "read_lecture") {
         const ids = args.lecture_ids ?? [cursor?.id];
-        const labels = ids.filter(Boolean).map(id => window.ICS.db.lectureTitle(id) ?? id);
+        const labels = ids.filter(Boolean).map(id => window.ICS.db.lectureSource(id)?.lecture_title ?? id);
         const mode = args.mode ?? cursor?.mode ?? "summary";
         return "Reading " + mode + (labels.length ? " of " + labels.map(quote).join(", ") : "") +
           (args.cursor ? " · next page" : "");
@@ -227,6 +228,20 @@ export async function makeAgentUI(app) {
         return "Reading lecture list for " + quote(title) + (args.cursor ? " · next page" : "");
       }
       return "Listing courses" + (args.page ? " · page " + (args.page + 1) : "");
+    },
+
+    renderAnswer(text) {
+      return window.ICS.render.renderAnswer(text, window.ICS.db.lectureSource);
+    },
+
+    openCitation(event) {
+      const citation = event.target.closest("button.agent-citation");
+      if (!citation) return;
+      const { lectureId, mode } = citation.dataset;
+      if (Object.hasOwn(citationViews, mode) && window.ICS.db.lectureSource(lectureId)) {
+        app.openLecture(lectureId, citationViews[mode]);
+        app._scrollToTop();
+      }
     },
 
     fitInput(input) {

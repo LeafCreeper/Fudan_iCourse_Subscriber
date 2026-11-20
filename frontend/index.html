@@ -905,7 +905,8 @@
           <template x-for="(message, index) in agent.messageList" :key="agent.activeId + ':' + index">
             <div class="agent-message" :data-role="message.role">
               <template x-if="message.role === 'assistant'">
-                <div class="agent-answer prose" x-html="renderMd(message.text)"
+                <div class="agent-answer prose" x-html="agent.renderAnswer(message.text)"
+                     @click="agent.openCitation($event)"
                      x-effect="message.text; $nextTick(() => activateKaTeX($el))"></div>
               </template>
               <template x-if="message.role === 'tools'">
@@ -923,7 +924,9 @@
               </template>
             </div>
           </template>
-          <p x-show="agent.liveText" class="agent-message whitespace-pre-wrap" x-text="agent.liveText" aria-live="off"></p>
+          <div x-show="agent.liveText" class="agent-message agent-answer prose" aria-live="off"
+               x-html="agent.renderAnswer(agent.liveText)" @click="agent.openCitation($event)"
+               x-effect="agent.liveText; $nextTick(() => activateKaTeX($el))"></div>
           <p x-show="agent.running && !agent.answerStarted" class="agent-working" role="status">正在处理…</p>
         </div>
 

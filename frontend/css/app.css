@@ -29,8 +29,11 @@
   color: #1a1a1a;
   word-break: break-word;
 }
+.prose h1 { font-size: 1.65em; font-weight: 700; margin: 1.25em 0 0.55em; color: #243449; }
+.prose h2 { font-size: 1.35em; font-weight: 700; margin: 1.25em 0 0.55em; color: #243449; }
 .prose h3 { font-size: 1.15em; font-weight: 700; margin: 1.4em 0 0.6em; color: #2c3e50; }
 .prose h4 { font-size: 1.05em; font-weight: 600; margin: 1.2em 0 0.5em; color: #34495e; }
+.prose h5, .prose h6 { font-size: 1em; font-weight: 600; margin: 1em 0 0.4em; color: #34495e; }
 .prose p  { margin: 0.6em 0; }
 .prose ul, .prose ol { padding-left: 1.5em; margin: 0.5em 0; }
 .prose ul { list-style-type: disc; }
@@ -167,7 +170,9 @@ mark { background: #fef08a; padding: 0 2px; border-radius: 2px; }
 .agent-tools summary { cursor: pointer; }
 .agent-tools ul { margin: .35rem 0 0 .85rem; padding-left: .65rem; border-left: 1px solid #dbe2ea; }
 .agent-tools li { margin: .22rem 0; }
-.agent-answer.prose { font-size: .925rem; }
+.agent-citation { padding-inline: .12em; font-size: .95em; color: #526176; }
+button.agent-citation { color: #1d4ed8; cursor: pointer; }
+button.agent-citation:hover, button.agent-citation:focus-visible { text-decoration: underline; }
 .agent-answer.prose > :first-child { margin-top: 0; }
 .agent-actions { display: flex; align-items: center; gap: .45rem; flex-shrink: 0; }
 .agent-actions button { padding: .3rem .45rem; border-radius: 5px; font-size: .8rem; }

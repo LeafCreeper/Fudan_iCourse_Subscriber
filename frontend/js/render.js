@@ -52,12 +52,48 @@ function _restoreFormulas(html, formulas) {
   return html;
 }
 
-function _renderMarkdown(mdText) {
+function _renderMarkdown(mdText, parser = marked) {
   if (!mdText) return "";
   var stashed = _stashFormulas(mdText);
-  var rawHtml = marked.parse(stashed.text, { breaks: true });
+  var rawHtml = parser.parse(stashed.text, { breaks: true });
   var restored = _restoreFormulas(rawHtml, stashed.formulas);
   return DOMPurify.sanitize(restored);
+}
+
+function _renderAnswer(text, findSource) {
+  if (!text) return "";
+  const citations = new Map();
+  const parser = new marked.Marked({ extensions: [{
+    name: "lectureCitation",
+    level: "inline",
+    start(src) { return src.indexOf("[[cite:"); },
+    tokenizer(src) {
+      const match = /^\[\[cite:([^\s[\]]+?):(summary|transcript|ocr)\]\]/.exec(src);
+      if (match) return { type: "lectureCitation", raw: match[0], id: match[1], mode: match[2] };
+    },
+    renderer({ id, mode }) {
+      const key = JSON.stringify([id, mode]);
+      if (citations.has(key)) return citations.get(key);
+      const number = citations.size + 1;
+      const source = findSource(id);
+      const mark = document.createElement(source ? "button" : "span");
+      mark.className = "agent-citation";
+      mark.textContent = number <= 20 ? String.fromCodePoint(0x245f + number) : "(" + number + ")";
+      if (source) {
+        mark.type = "button";
+        mark.dataset.lectureId = id;
+        mark.dataset.mode = mode;
+        mark.title = [source.course_title, source.teacher || "教师未标注", source.lecture_title].join(" · ");
+        mark.setAttribute("aria-label", "引用 " + number + "：" + mark.title);
+      } else {
+        mark.title = "本地资料中找不到该课次";
+      }
+      const html = mark.outerHTML;
+      citations.set(key, html);
+      return html;
+    },
+  }] });
+  return _renderMarkdown(text, parser);
 }
 
 function _activateKaTeX(element) {
@@ -94,6 +130,7 @@ function _plainSnippet(mdText, maxLen) {
 
 window.ICS.render = {
   renderMarkdown: _renderMarkdown,
+  renderAnswer: _renderAnswer,
   activateKaTeX: _activateKaTeX,
   plainSnippet: _plainSnippet,
 };

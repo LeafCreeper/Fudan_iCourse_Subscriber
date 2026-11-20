@@ -356,7 +356,8 @@ document.addEventListener("alpine:init", () => {
 
     navigate(view, params) {
       params = params || {};
-      this._history.push({ view: this.view, courseId: this.currentCourse?.course_id, lectureId: this.currentLecture?.sub_id });
+      this._history.push({ view: this.view, courseId: this.currentCourse?.course_id,
+        lectureId: this.currentLecture?.sub_id, detailView: this.detailView });
       this._go(view, params);
     },
     _go(view, params) {
@@ -389,7 +390,7 @@ document.addEventListener("alpine:init", () => {
             this.lectures = ICS.db.getLectures(cid);
           }
         }
-        this.detailView = "summary";
+        this.detailView = params.detailView ?? "summary";
       }
       this.view = view;
       if (view !== "lectures") this.exportDialogOpen = false;
@@ -407,12 +408,12 @@ document.addEventListener("alpine:init", () => {
     },
     goBack() {
       const p = this._history.pop();
-      if (p) this._go(p.view, { courseId: p.courseId, subId: p.lectureId });
+      if (p) this._go(p.view, { courseId: p.courseId, subId: p.lectureId, detailView: p.detailView });
       else this._go("courses");
     },
 
     openCourse(id) { this.navigate("lectures", { courseId: id }); },
-    openLecture(id) { this.navigate("detail", { subId: id }); },
+    openLecture(id, detailView) { this.navigate("detail", { subId: id, detailView }); },
 
     /* Prev/next within the current course's lecture list.  Lectures are
        ordered chronologically (parsed from sub_title; see db.js
