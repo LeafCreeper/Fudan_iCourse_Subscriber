@@ -325,8 +325,8 @@ export async function makeAgentUI(app) {
     },
 
     async send(resume = false) {
-      const text = resume ? "" : this.draft.trim();
-      if (this.running || this.historySaving || !this.configured || (!text && !resume)) return;
+      const text = resume ? "" : this.draft;
+      if (this.running || this.historySaving || !this.configured || (!resume && !text.trim())) return;
       if (!resume) this.draft = "";
       this.running = true;
       this.operationError = "";
