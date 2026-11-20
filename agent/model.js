@@ -11,7 +11,7 @@ export const presets = {
 
 export const defaultConfig = {
   provider: "custom", url: "", model: "", apiKey: "", rememberKey: false,
-  contextChars: 750000, contextTokens: 0,
+  contextChars: 1500000, contextTokens: 0,
 };
 
 export class ModelRequestError extends Error {

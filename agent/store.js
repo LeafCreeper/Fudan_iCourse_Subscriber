@@ -1,6 +1,7 @@
 const storeName = "sessions";
 const configKey = "ics_agent_config";
 const activeKey = "ics_agent_active";
+const settingsVersion = 2;
 let opened;
 
 function open() {
@@ -33,11 +34,13 @@ export const sessions = {
 
 export function loadConfig(defaultConfig) {
   const stored = JSON.parse(localStorage.getItem(configKey) ?? "{}");
+  // Earlier versions also saved the default as a literal value.
+  if (!stored.settingsVersion && stored.contextChars === 750000) delete stored.contextChars;
   return { ...defaultConfig, ...stored };
 }
 
 export function saveConfig(config) {
-  const copy = { ...config };
+  const copy = { ...config, settingsVersion };
   if (!copy.rememberKey) delete copy.apiKey;
   localStorage.setItem(configKey, JSON.stringify(copy));
 }

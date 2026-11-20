@@ -179,6 +179,7 @@ export function compactedMessages(messages, summary, texts, tools, config) {
 }
 
 function shortCount(value) {
+  if (value >= 1000000) return String(Math.round(value / 10000) / 100) + "M";
   if (value < 1000) return String(value);
   return String(Math.round(value / 1000)) + "k";
 }
