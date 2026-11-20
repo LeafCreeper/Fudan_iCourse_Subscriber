@@ -12,6 +12,21 @@ const maxPaneWidth = () => window.innerWidth - 310;
 const quote = value => JSON.stringify(value);
 const ready = config => Boolean(config.url && config.model && (config.provider === "custom" || config.apiKey));
 const delay = () => new Promise(resolve => setTimeout(resolve, 0));
+const historyDate = new Intl.DateTimeFormat("en-US", {
+  timeZone: "Asia/Shanghai", year: "numeric", month: "short", day: "numeric",
+});
+
+function listConversations(records) {
+  const rows = [...records.values()].sort((a, b) => b.updatedAt - a.updatedAt)
+    .map(({ id, title, updatedAt }) => {
+      const date = new Date(updatedAt);
+      const parts = Object.fromEntries(historyDate.formatToParts(date).map(({ type, value }) => [type, value]));
+      return { id, title, dateTime: date.toISOString(), dateLabel: parts.month + " " + parts.day, year: parts.year };
+    });
+  return rows.map((row, i) => ({
+    ...row, dateLabel: row.dateLabel + (rows[i + 1]?.year !== row.year ? ", " + row.year : ""),
+  }));
+}
 
 export async function makeAgentUI(app) {
   const [spec, saved] = await Promise.all([loadContract(), sessions.list()]);
@@ -88,7 +103,10 @@ export async function makeAgentUI(app) {
     running: false,
     paused: false,
     historyOpen: false,
-    deletePending: false,
+    chatMenu: null,
+    chatAction: null,
+    renameDraft: "",
+    historySaving: false,
 
     connectMedia() {
       media.addEventListener("change", event => { this.desktop = event.matches; });
@@ -123,8 +141,7 @@ export async function makeAgentUI(app) {
       citationIndex = active.visible.length;
       this.messageList = active.visible.slice();
       this.lastQuestion = active.visible.findLastIndex(item => item.role === "user");
-      this.conversations = [...records.values()].sort((a, b) => b.updatedAt - a.updatedAt)
-        .map(({ id, title }) => ({ id, title }));
+      this.conversations = listConversations(records);
       this.activeId = active.id;
       this.title = active.title;
       this.context = contextStatus(active, tools, this.config);
@@ -135,6 +152,7 @@ export async function makeAgentUI(app) {
     newChat() {
       selectRecord(newSession());
       this.historyOpen = false;
+      this.closeChatMenu();
       this.draft = "";
       this.operationError = "";
       this.sync();
@@ -145,19 +163,55 @@ export async function makeAgentUI(app) {
       selectRecord(records.get(id));
       this.draft = "";
       this.historyOpen = false;
+      this.closeChatMenu();
       this.operationError = "";
       this.sync();
     },
 
-    async deleteChat() {
-      if (!this.deletePending) {
-        this.deletePending = true;
-        return;
+    toggleHistory() {
+      this.historyOpen = !this.historyOpen;
+      this.closeChatMenu();
+    },
+
+    toggleChatMenu(id) {
+      this.chatMenu = this.chatMenu === id ? null : id;
+      this.chatAction = null;
+    },
+
+    closeChatMenu() {
+      this.chatMenu = null;
+      this.chatAction = null;
+    },
+
+    beginRename(chat) {
+      this.renameDraft = chat.title;
+      this.chatAction = "rename";
+    },
+
+    async applyChatAction(id) {
+      const title = this.renameDraft.trim();
+      if (this.running || this.historySaving || (this.chatAction === "rename" && !title)) return;
+      this.historySaving = true;
+      try {
+        if (this.chatAction === "rename") {
+          const record = records.get(id);
+          await sessions.save({ ...record, title });
+          record.title = title;
+        } else {
+          await sessions.remove(id);
+          records.delete(id);
+          if (active.id === id) {
+            const next = this.conversations.find(chat => chat.id !== id);
+            selectRecord(next ? records.get(next.id) : newSession());
+            this.draft = "";
+            this.operationError = "";
+          }
+        }
+        this.closeChatMenu();
+        this.sync();
+      } finally {
+        this.historySaving = false;
       }
-      await sessions.remove(active.id);
-      records.delete(active.id);
-      this.deletePending = false;
-      this.newChat();
     },
 
     exportChat() {
@@ -272,13 +326,13 @@ export async function makeAgentUI(app) {
 
     async send(resume = false) {
       const text = resume ? "" : this.draft.trim();
-      if (this.running || !this.configured || (!text && !resume)) return;
+      if (this.running || this.historySaving || !this.configured || (!text && !resume)) return;
       if (!resume) this.draft = "";
       this.running = true;
       this.operationError = "";
       this.notice = "";
       this.paused = false;
-      this.deletePending = false;
+      this.closeChatMenu();
       controller = new AbortController();
       const dataset = [app.repoOwner, app.repoName, app.dataBranch].join("/");
       const page = this.desktop && !resume ? currentPage() ?? (app.view === "agent" ? lastPage : null) : null;

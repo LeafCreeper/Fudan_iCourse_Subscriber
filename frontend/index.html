@@ -874,22 +874,52 @@
             <p x-show="agent.pageLabel" class="text-xs text-gray-500" x-text="agent.pageLabel"></p>
           </div>
           <div class="agent-actions">
-            <button type="button" @click="agent.historyOpen = !agent.historyOpen; agent.deletePending = false"
+            <button type="button" @click="agent.toggleHistory()" :disabled="agent.historySaving"
                     :aria-expanded="agent.historyOpen">记录</button>
-            <button type="button" @click="agent.newChat()" :disabled="agent.running">新对话</button>
+            <button type="button" @click="agent.newChat()" :disabled="agent.running || agent.historySaving">新对话</button>
           </div>
         </header>
 
-        <div x-show="agent.historyOpen" class="agent-history">
+        <div x-show="agent.historyOpen" class="agent-history" @keydown.escape="agent.closeChatMenu()">
           <p x-show="!agent.conversations.length" class="text-sm text-gray-500">暂无聊天记录</p>
           <template x-for="chat in agent.conversations" :key="chat.id">
-            <button type="button" class="agent-session" :class="{ 'agent-session-current': agent.activeId === chat.id }"
-                    :disabled="agent.running" @click="agent.openChat(chat.id)" x-text="chat.title"></button>
+            <div class="agent-session">
+              <div class="agent-session-row" :class="{ 'agent-session-current': agent.activeId === chat.id }">
+                <button type="button" class="agent-session-name" :title="chat.title"
+                        :disabled="agent.running || agent.historySaving" @click="agent.openChat(chat.id)" x-text="chat.title"></button>
+                <time :datetime="chat.dateTime" title="北京时间 · 最后活动" x-text="chat.dateLabel"></time>
+                <button type="button" class="agent-session-toggle" :aria-label="'会话操作：' + chat.title"
+                        :aria-expanded="agent.chatMenu === chat.id" :disabled="agent.running || agent.historySaving"
+                        @click="agent.toggleChatMenu(chat.id)">…</button>
+              </div>
+              <div x-show="agent.chatMenu === chat.id" class="agent-session-menu agent-actions"
+                   x-effect="agent.chatMenu === chat.id && $nextTick(() => $el.scrollIntoView({ block: 'nearest' }))">
+                <template x-if="agent.chatMenu === chat.id && agent.chatAction === null">
+                  <div class="agent-actions">
+                    <button type="button" @click="agent.beginRename(chat)">重命名</button>
+                    <button type="button" @click="agent.chatAction = 'delete'" class="text-red-600">删除</button>
+                  </div>
+                </template>
+                <template x-if="agent.chatMenu === chat.id && agent.chatAction === 'rename'">
+                  <form class="agent-session-rename agent-actions" @submit.prevent="agent.applyChatAction(chat.id)">
+                    <input type="text" x-model="agent.renameDraft" aria-label="会话名称" maxlength="120"
+                           :disabled="agent.historySaving" x-init="$nextTick(() => { $el.focus(); $el.select(); })">
+                    <button type="submit" :disabled="!agent.renameDraft.trim() || agent.historySaving">保存</button>
+                    <button type="button" :disabled="agent.historySaving" @click="agent.closeChatMenu()">取消</button>
+                  </form>
+                </template>
+                <template x-if="agent.chatMenu === chat.id && agent.chatAction === 'delete'">
+                  <div class="agent-actions">
+                    <button type="button" @click="agent.applyChatAction(chat.id)" :disabled="agent.historySaving"
+                            class="text-red-600">确认删除</button>
+                    <button type="button" @click="agent.closeChatMenu()" :disabled="agent.historySaving">取消</button>
+                  </div>
+                </template>
+              </div>
+            </div>
           </template>
           <div x-show="agent.messageList.length" class="agent-actions mt-2">
             <button type="button" @click="agent.exportChat()">导出</button>
-            <button type="button" :disabled="agent.running" @click="agent.deleteChat()"
-                    class="text-red-600" x-text="agent.deletePending ? '确认删除' : '删除当前'"></button>
           </div>
         </div>
 
