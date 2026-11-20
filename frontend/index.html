@@ -950,7 +950,7 @@
                 </details>
               </template>
               <template x-if="message.role === 'user' || message.role === 'progress'">
-                <p class="whitespace-pre-wrap" x-text="message.text"></p>
+                <p class="whitespace-pre-wrap" :class="{ prose: message.role === 'progress' }" x-text="message.text"></p>
               </template>
             </div>
           </template>

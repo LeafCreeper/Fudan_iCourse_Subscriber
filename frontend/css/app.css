@@ -178,7 +178,7 @@ mark { background: #fef08a; padding: 0 2px; border-radius: 2px; }
   color: #193258;
   font-size: .92rem;
 }
-.agent-message[data-role="progress"], .agent-working, .agent-notice { color: #526176; font-size: .8rem; }
+.agent-working, .agent-notice { color: #526176; font-size: .8rem; }
 .agent-tools { color: #526176; font-size: .8rem; }
 .agent-tools summary { cursor: pointer; }
 .agent-tools ul { margin: .35rem 0 0 .85rem; padding-left: .65rem; border-left: 1px solid #dbe2ea; }
