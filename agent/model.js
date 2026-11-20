@@ -93,7 +93,7 @@ export async function testConnection(config, spec, signal) {
       !parseCall(spec, "search_course", call.function.arguments).ok) {
     throw new ModelRequestError("端点可访问，但模型没有正确完成测试工具调用。", "protocol");
   }
-  const result = { ok: true, data: { snapshot: "test", items: [], total: 0, page: 0, page_max: 30, next_page: null } };
+  const result = { ok: true, data: { items: [], total: 0, page: 0, page_max: 30, next_page: null } };
   messages.push(reply.message, { role: "tool", tool_call_id: call.id, content: JSON.stringify(result) });
   const checked = await requestModel(config, tools, messages, signal, 2048);
   if (checked.finish !== "stop" || !checked.message.content?.toLowerCase().includes("pong") || checked.message.tool_calls) {

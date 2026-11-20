@@ -36,7 +36,8 @@ export async function runTurn({
   session, config, spec, reader, dataset, snapshot, page, text, signal, publish, onText = () => {}, transport = requestModel,
 }) {
   const tools = modelTools(spec);
-  const courseTools = createCourseTools(reader, snapshot, session.cursors, dataset);
+  const nextTextId = () => "t" + ++session.nextTextId;
+  const courseTools = createCourseTools(reader, snapshot, session.cursors, nextTextId);
   const available = new Set(dataTools);
   const memo = new Map();
   const measure = messages => inputSize(messages, tools);
@@ -164,7 +165,7 @@ export async function runTurn({
     })()]));
     const resolved = await Promise.all(entries.map(async entry => {
       const value = entry.result ?? await handles.get(entry.key);
-      if (value.ok) await rememberResult(session, dataset, entry.name, value);
+      if (value.ok) rememberResult(session, dataset, entry.name, value, entry.args);
       return { value, entry };
     }));
     session.messages.push(message, ...resolved.map(({ entry, value }) => batchResult(entry.call, value)));
@@ -188,7 +189,7 @@ export async function runTurn({
 
   if (text) {
     const pageRoom = Math.max(0, Math.min(20000, Math.floor((room(session.messages) - 8000) / 2)));
-    const current = await appendPage(session, dataset, page, reader, courseTools, pageRoom);
+    const current = appendPage(session, dataset, page, reader, courseTools, pageRoom);
     session.messages.push(appMessage("question", { text, current_page: current }));
     if (!session.visible.length) session.title = Array.from(text).slice(0, 36).join("");
     session.visible.push({ role: "user", text });

@@ -1,13 +1,11 @@
 import { questionPrompt, compressionPrompt } from "./prompts.js";
 
-const utf8 = new TextEncoder();
-
 export const appMessage = (kind, data) => ({ role: "user", content: JSON.stringify({ kind, data }) });
 export const makeInput = messages => [{ role: "system", content: questionPrompt }, ...messages];
 export const compressionInput = messages => [...messages, appMessage("compression_instruction", compressionPrompt)];
 export const newSession = () => ({
   id: crypto.randomUUID(), title: "新对话", updatedAt: Date.now(),
-  visible: [], messages: [], seenParts: {}, seenTexts: {}, cursors: {}, compacted: 0, run: null,
+  visible: [], messages: [], seenPages: {}, cursors: {}, nextTextId: 0, compacted: 0, run: null,
 });
 
 export function inputSize(messages, tools) {
@@ -35,102 +33,69 @@ export function contextRoom(size, config) {
     : room;
 }
 
-function sourceKey(dataset, block) {
-  const { lecture_id, mode, source_version } = block.source;
-  return JSON.stringify([dataset, lecture_id, mode, source_version]);
-}
+const pageKey = (dataset, kind, id) => JSON.stringify([dataset, kind, id]);
 
-function storeRange(session, key, start, end) {
-  const ranges = [...(session.seenTexts[key] ?? []), [start, end]].sort((a, b) => a[0] - b[0]);
-  const merged = [];
-  for (const range of ranges) {
-    const last = merged.at(-1);
-    if (last && last[1] >= range[0]) last[1] = Math.max(last[1], range[1]);
-    else merged.push([...range]);
-  }
-  session.seenTexts[key] = merged;
-}
-
-function unseenRanges(position, end, prior) {
-  const remaining = [];
-  for (const [left, right] of prior) {
-    if (right <= position) continue;
-    if (left >= end) break;
-    if (left > position) remaining.push([position, left]);
-    position = Math.max(position, right);
-  }
-  if (position < end) remaining.push([position, end]);
-  return remaining;
-}
-
-async function partKey(dataset, kind, data) {
-  const digest = await crypto.subtle.digest("SHA-256", utf8.encode(JSON.stringify([dataset, kind, data])));
-  return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("");
-}
-
-async function markPart(session, dataset, kind, data, append) {
-  const key = await partKey(dataset, kind, data);
-  if (!session.seenParts[key] && append) session.messages.push(appMessage(kind, data));
-  session.seenParts[key] = true;
+function appendPart(session, dataset, kind, id, data) {
+  const key = pageKey(dataset, kind, id);
+  if (session.seenPages[key]) return;
+  session.messages.push(appMessage(kind, data));
+  session.seenPages[key] = true;
 }
 
 const menuContents = result => ({ course_id: result.course.course_id, items: result.items,
   total: result.total, next_cursor: result.next_cursor });
 
-export async function rememberResult(session, dataset, name, result) {
-  if (!result.ok) return;
+export function rememberResult(session, dataset, name, result, args) {
   const data = result.data;
   if (name === "read_lecture") {
-    for (const block of data.items.filter(item => item.status === "text")) {
-      storeRange(session, sourceKey(dataset, block), block.start, block.end);
+    for (const block of data.items) {
+      if (block.status === "text" && block.source.mode === "summary" && block.start === 0) {
+        session.seenPages[pageKey(dataset, "page_text", block.source.lecture_id)] = true;
+      }
     }
   } else if (name === "read_course") {
-    await markPart(session, dataset, "course", data.course, false);
-    await markPart(session, dataset, "lecture_menu", menuContents(data), false);
+    const id = data.course.course_id;
+    session.seenPages[pageKey(dataset, "course", id)] = true;
+    if (args.cursor === null) {
+      session.seenPages[pageKey(dataset, "lecture_menu", id)] = true;
+    }
   } else if (name === "read_course_list" || name === "search_course") {
-    for (const course of data.items) await markPart(session, dataset, "course", course, false);
+    for (const course of data.items) {
+      session.seenPages[pageKey(dataset, "course", course.course_id)] = true;
+    }
   }
 }
 
-export async function appendPage(session, dataset, page, reader, tools, textRoom = 20000) {
+export function appendPage(session, dataset, page, reader, tools, textRoom = 20000) {
   if (!page || !reader) return null;
   if (page.view === "courses") {
     const courses = new Map(reader.courses().map(row => [row.course_id, row]));
-    await markPart(session, dataset, "course_list_order", page.courseIds, true);
+    appendPart(session, dataset, "course_list_order", page.courseIds, page.courseIds);
     for (const id of page.courseIds) {
-      if (courses.has(id)) await markPart(session, dataset, "course", courses.get(id), true);
+      if (courses.has(id)) appendPart(session, dataset, "course", id, courses.get(id));
     }
     return { kind: "course_list" };
   }
   if (page.view === "lectures") {
-    const result = await tools.run("read_course", { course_id: page.courseId, cursor: null });
+    const result = tools.run("read_course", { course_id: page.courseId, cursor: null });
     if (!result.ok) return null;
-    await markPart(session, dataset, "course", result.data.course, true);
-    await markPart(session, dataset, "lecture_menu", menuContents(result.data), true);
+    appendPart(session, dataset, "course", page.courseId, result.data.course);
+    appendPart(session, dataset, "lecture_menu", page.courseId, menuContents(result.data));
     return { kind: "course", course_id: page.courseId };
   }
   const row = reader.lecture(page.lectureId);
   if (!row) return null;
   const course = reader.courses().find(item => item.course_id === row.course_id);
-  if (course) await markPart(session, dataset, "course", course, true);
+  if (course) appendPart(session, dataset, "course", row.course_id, course);
   const details = { course_id: row.course_id, lecture_id: row.sub_id, title: row.sub_title, state: row.state };
-  await markPart(session, dataset, "lecture", details, true);
-  if (row.summary && textRoom > 0) {
-    const response = await tools.run("read_lecture", {
-      lecture_ids: [row.sub_id], mode: "summary", offset: null, source_version: null, cursor: null,
+  appendPart(session, dataset, "lecture", row.sub_id, details);
+  const key = pageKey(dataset, "page_text", row.sub_id);
+  if (row.summary && textRoom > 0 && !session.seenPages[key]) {
+    const response = tools.run("read_lecture", {
+      lecture_ids: [row.sub_id], mode: "summary", cursor: null,
     }, textRoom);
-    const block = response.data.items[0];
-    const key = sourceKey(dataset, block);
-    const chars = Array.from(block.text);
-    for (const [start, end] of unseenRanges(block.start, block.end, session.seenTexts[key] ?? [])) {
-      const last = end === block.end;
-      const text_id = JSON.stringify([dataset, row.sub_id, "summary", block.source.source_version, start, end]);
-      session.messages.push(appMessage("page_text", {
-        ...block, text_id, start, end, text: chars.slice(start - block.start, end - block.start).join(""),
-        next_offset: last ? block.next_offset : null, next_cursor: last ? block.next_cursor : null,
-      }));
-      storeRange(session, key, start, end);
-    }
+    session.messages.push(appMessage("page_text", response.data.items[0]));
+    session.seenPages[key] = true;
   }
   return { kind: "lecture", course_id: row.course_id, lecture_id: row.sub_id };
 }

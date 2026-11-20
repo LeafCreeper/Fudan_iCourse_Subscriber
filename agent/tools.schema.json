@@ -97,8 +97,6 @@
   "$defs": {
     "Mode": {"type":"string","enum":["summary","transcript","ocr"],"description":"课程资料类型。"},
     "Cursor": {"type":"string","description":"由工具签发的不透明续页游标。原样传回。","minLength":1},
-    "Snapshot": {"type":"string","description":"本次查询使用的课程数据快照标识。","minLength":1},
-    "Version": {"type":"string","description":"原文版本标识。按原样传回。","minLength":1},
     "Course": {
       "type": "object",
       "additionalProperties": false,
@@ -115,14 +113,13 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "snapshot": {"$ref":"#/$defs/Snapshot"},
         "items": {"type":"array","description":"本页课程。","items":{"$ref":"#/$defs/Course"},"minItems":0,"maxItems":100},
         "total": {"type":"integer","description":"课程总数。","minimum":0},
         "page": {"type":"integer","description":"本页页码。","minimum":0},
         "page_max": {"type":"integer","description":"实际页大小。","minimum":1,"maximum":100},
         "next_page": {"anyOf":[{"type":"integer","description":"下一页页码。","minimum":0},{"type":"null"}]}
       },
-      "required": ["snapshot","items","total","page","page_max","next_page"]
+      "required": ["items","total","page","page_max","next_page"]
     },
     "LectureMenuItem": {
       "type": "object",
@@ -143,10 +140,9 @@
       "properties": {
         "course_id": {"type":"string","description":"课程 ID。","minLength":1},
         "lecture_id": {"type":"string","description":"课次 ID。","minLength":1},
-        "mode": {"$ref":"#/$defs/Mode"},
-        "source_version": {"$ref":"#/$defs/Version"}
+        "mode": {"$ref":"#/$defs/Mode"}
       },
-      "required": ["course_id","lecture_id","mode","source_version"]
+      "required": ["course_id","lecture_id","mode"]
     },
     "OcrPage": {
       "type": "object",
@@ -173,12 +169,10 @@
             "start": {"type":"integer","description":"本段起点。","minimum":0},
             "end": {"type":"integer","description":"本段终点。","minimum":0},
             "total_chars": {"type":"integer","description":"完整原文的字符数。","minimum":0},
-            "next_offset": {"anyOf":[{"type":"integer","description":"未读部分的起点。","minimum":0},{"type":"null"}]},
             "next_cursor": {"anyOf":[{"$ref":"#/$defs/Cursor"},{"type":"null"}]},
             "ocr_pages": {"type":"array","description":"与本段相交的 OCR 页。其他资料类型返回空列表。","items":{"$ref":"#/$defs/OcrSpan"}}
           },
-          "required": ["status","source","text_id","text","start","end","total_chars","next_offset","next_cursor","ocr_pages"],
-          "allOf": [{"if":{"properties":{"next_cursor":{"type":"null"}}},"then":{"properties":{"next_offset":{"type":"null"}}},"else":{"properties":{"next_offset":{"type":"integer"}}}}]
+          "required": ["status","source","text_id","text","start","end","total_chars","next_cursor","ocr_pages"]
         },
         {
           "type": "object",
@@ -197,11 +191,10 @@
           "properties": {
             "status": {"const":"deferred"},
             "source": {"$ref":"#/$defs/Source"},
-            "next_offset": {"type":"integer","description":"尚未返回的起点。","minimum":0},
             "next_cursor": {"$ref":"#/$defs/Cursor"},
             "reason": {"const":"CONTEXT_BUDGET"}
           },
-          "required": ["status","source","next_offset","next_cursor","reason"]
+          "required": ["status","source","next_cursor","reason"]
         }
       ]
     },
@@ -216,14 +209,11 @@
       "additionalProperties": false,
       "properties": {
         "keyword": {"type":"string","description":"命中的关键词。","minLength":1},
-        "match_start": {"type":"integer","description":"命中起点。","minimum":0},
-        "match_end": {"type":"integer","description":"命中终点。","minimum":0},
         "snippet": {"type":"string","description":"原文片段，命中前后各最多 30 字符。","minLength":1},
-        "snippet_start": {"type":"integer","description":"片段在原文中的起点。","minimum":0},
-        "snippet_end": {"type":"integer","description":"片段在原文中的终点。","minimum":0},
+        "read_cursor": {"$ref":"#/$defs/Cursor","description":"在 read_lecture 中读取此处原文的游标。"},
         "ocr_page": {"anyOf":[{"$ref":"#/$defs/OcrPage"},{"type":"null"}]}
       },
-      "required": ["keyword","match_start","match_end","snippet","snippet_start","snippet_end","ocr_page"]
+      "required": ["keyword","snippet","read_cursor","ocr_page"]
     },
     "SearchGroup": {
       "type": "object",
@@ -250,7 +240,7 @@
           "properties": {
             "code": {
               "type": "string",
-              "enum": ["UNKNOWN_TOOL","INVALID_ARGUMENT","NOT_FOUND","INVALID_CURSOR","STALE_CURSOR","SOURCE_CHANGED","DATA_UNAVAILABLE","BATCH_LIMIT","BUDGET_PAUSED","RESULT_TOO_LARGE","NO_PROGRESS","CANCELLED","INTERNAL_ERROR"],
+              "enum": ["UNKNOWN_TOOL","INVALID_ARGUMENT","NOT_FOUND","INVALID_CURSOR","STALE_CURSOR","DATA_UNAVAILABLE","BATCH_LIMIT","BUDGET_PAUSED","RESULT_TOO_LARGE","NO_PROGRESS","CANCELLED","INTERNAL_ERROR"],
               "description": "机器可读的错误代码。"
             },
             "message": {"type":"string","description":"一句话解释问题和可行的下一步。","minLength":1},
@@ -259,7 +249,7 @@
           "required": ["code","message","recovery"],
           "allOf": [
             {"if":{"properties":{"code":{"enum":["UNKNOWN_TOOL","INVALID_ARGUMENT","NOT_FOUND","RESULT_TOO_LARGE"]}}},"then":{"properties":{"recovery":{"const":"fix_arguments"}}}},
-            {"if":{"properties":{"code":{"enum":["INVALID_CURSOR","STALE_CURSOR","SOURCE_CHANGED"]}}},"then":{"properties":{"recovery":{"const":"restart"}}}},
+            {"if":{"properties":{"code":{"enum":["INVALID_CURSOR","STALE_CURSOR"]}}},"then":{"properties":{"recovery":{"const":"restart"}}}},
             {"if":{"properties":{"code":{"enum":["DATA_UNAVAILABLE","BATCH_LIMIT","INTERNAL_ERROR"]}}},"then":{"properties":{"recovery":{"const":"retry"}}}},
             {"if":{"properties":{"code":{"enum":["BUDGET_PAUSED","NO_PROGRESS","CANCELLED"]}}},"then":{"properties":{"recovery":{"const":"resume"}}}}
           ]
@@ -309,13 +299,12 @@
               "type": "object",
               "additionalProperties": false,
               "properties": {
-                "snapshot": {"$ref":"#/$defs/Snapshot"},
                 "course": {"$ref":"#/$defs/Course"},
                 "items": {"type":"array","description":"本页课次，最早的课次在前。","items":{"$ref":"#/$defs/LectureMenuItem"},"minItems":0,"maxItems":100},
                 "total": {"type":"integer","description":"课程课次总数。","minimum":0},
                 "next_cursor": {"anyOf":[{"$ref":"#/$defs/Cursor"},{"type":"null"}]}
               },
-              "required": ["snapshot","course","items","total","next_cursor"]
+              "required": ["course","items","total","next_cursor"]
             }
           },
           "required": ["ok","data"]
@@ -329,19 +318,16 @@
       "properties": {
         "lecture_ids": {"anyOf":[{"type":"array","description":"首次最多四个不同课次。使用 cursor 时传 null。","items":{"type":"string","description":"课次 ID。","minLength":1},"minItems":1,"maxItems":4,"uniqueItems":true},{"type":"null"}]},
         "mode": {"anyOf":[{"$ref":"#/$defs/Mode"},{"type":"null"}],"description":"首次为 null 时使用 summary。续页传 null。"},
-        "offset": {"anyOf":[{"type":"integer","description":"首次调用可对单课次指定字符偏移。null 从 0 开始。续页传 null。","minimum":0},{"type":"null"}]},
-        "source_version": {"anyOf":[{"$ref":"#/$defs/Version"},{"type":"null"}],"description":"单课次读取时可传定位来源的版本。无版本要求或续页时传 null。"},
-        "cursor": {"anyOf":[{"$ref":"#/$defs/Cursor"},{"type":"null"}],"description":"初次读取传 null。续读时传该份原文的 next_cursor，其余字段都传 null。"}
+        "cursor": {"anyOf":[{"$ref":"#/$defs/Cursor"},{"type":"null"}],"description":"从头读传 null。翻页用 next_cursor，定位搜索命中用 read_cursor。使用游标时其余字段传 null。"}
       },
-      "required": ["lecture_ids","mode","offset","source_version","cursor"],
-      "description": "读取一个或多个已知课次的原文，返回来源、位置、文本与每份原文的 next_cursor。概览读 summary，课堂原话读 transcript，幻灯片内容读 ocr。搜索命中可用其来源版本和片段起点定位。",
+      "required": ["lecture_ids","mode","cursor"],
+      "description": "读取已知课次的摘要、转录或 OCR 原文。用 next_cursor 续读，用搜索命中的 read_cursor 从命中附近开始读。",
       "allOf": [
         {
           "if": {"properties":{"cursor":{"type":"null"}}},
           "then": {"properties":{"lecture_ids":{"type":"array"}}},
-          "else": {"properties":{"lecture_ids":{"type":"null"},"mode":{"type":"null"},"offset":{"type":"null"},"source_version":{"type":"null"}}}
-        },
-        {"if":{"anyOf":[{"properties":{"offset":{"type":"integer"}}},{"properties":{"source_version":{"type":"string"}}}]},"then":{"properties":{"lecture_ids":{"type":"array","maxItems":1}}}}
+          "else": {"properties":{"lecture_ids":{"type":"null"},"mode":{"type":"null"}}}
+        }
       ]
     },
     "read_lecture_output": {
@@ -354,8 +340,8 @@
             "data": {
               "type": "object",
               "additionalProperties": false,
-              "properties": {"snapshot":{"$ref":"#/$defs/Snapshot"},"items":{"type":"array","description":"按输入顺序返回。游标续页只返回一个目标。","items":{"$ref":"#/$defs/LectureItem"},"minItems":1,"maxItems":4}},
-              "required": ["snapshot","items"]
+              "properties": {"items":{"type":"array","description":"按输入顺序返回。使用游标时返回一个目标。","items":{"$ref":"#/$defs/LectureItem"},"minItems":1,"maxItems":4}},
+              "required": ["items"]
             }
           },
           "required": ["ok","data"]
@@ -376,7 +362,7 @@
         "cursor": {"anyOf":[{"$ref":"#/$defs/Cursor"},{"type":"null"}],"description":"首页传 null。按需要传上次返回的 next_cursor 或 next_hit_cursor，其他查询参数保持一致。"}
       },
       "required": ["keywords","modes","scope","course_ids","cursor"],
-      "description": "在指定课程范围和资料类型中按字面关键词查找，命中任一关键词即可。返回课次及资料类型、命中次数、片段和位置。顶层 next_cursor 翻命中组，组内 next_hit_cursor 翻该组的命中片段。需要原话或更多上下文时用 read_lecture。",
+      "description": "在指定课程范围和资料类型中按字面关键词查找，命中任一关键词即可。返回课次及资料类型、命中次数和片段。顶层 next_cursor 翻命中组，组内 next_hit_cursor 翻片段，命中的 read_cursor 交给 read_lecture 定位原文。",
       "allOf": [{"if":{"properties":{"scope":{"const":"courses"}}},"then":{"properties":{"course_ids":{"type":"array"}}},"else":{"properties":{"course_ids":{"type":"null"}}}}]
     },
     "search_lecture_output": {
@@ -393,13 +379,12 @@
                   "additionalProperties": false,
                   "properties": {
                     "kind": {"const":"groups"},
-                    "snapshot": {"$ref":"#/$defs/Snapshot"},
                     "items": {"type":"array","description":"按稳定顺序返回命中组。","items":{"$ref":"#/$defs/SearchGroup"},"minItems":0,"maxItems":10},
                     "next_cursor": {"anyOf":[{"$ref":"#/$defs/Cursor"},{"type":"null"}]}
                   },
-                  "required": ["kind","snapshot","items","next_cursor"]
+                  "required": ["kind","items","next_cursor"]
                 },
-                {"type":"object","additionalProperties":false,"properties":{"kind":{"const":"hits"},"snapshot":{"$ref":"#/$defs/Snapshot"},"item":{"$ref":"#/$defs/SearchGroup"}},"required":["kind","snapshot","item"]}
+                {"type":"object","additionalProperties":false,"properties":{"kind":{"const":"hits"},"item":{"$ref":"#/$defs/SearchGroup"}},"required":["kind","item"]}
               ]
             }
           },
