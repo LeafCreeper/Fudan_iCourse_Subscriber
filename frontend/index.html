@@ -26,7 +26,7 @@
 
   <!-- Left: back arrow or logo -->
   <div class="flex items-center gap-2 min-w-0">
-    <button x-show="['lectures','detail','settings','subscriptions'].includes(view)"
+    <button x-show="['lectures','detail','settings','subscriptions','agent'].includes(view)"
             @click="goBack()" class="p-1 -ml-1 text-gray-600 hover:text-gray-900 flex-shrink-0">
       <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/>
@@ -35,6 +35,7 @@
     <h1 class="text-base font-bold text-gray-800 truncate" x-text="
       view === 'lectures' ? currentCourse?.title :
       view === 'detail'   ? currentLecture?.sub_title :
+      view === 'agent' ? '课程问答' :
       view === 'settings' ? 'Settings' :
       view === 'subscriptions' ? '编辑订阅' :
       'iCourse'
@@ -75,6 +76,9 @@
       </svg>
       订阅
     </button>
+
+    <button type="button" @click="openAgent()" class="px-3 py-1.5 rounded-lg text-sm font-medium"
+            :class="view === 'agent' ? 'bg-blue-50 text-blue-600' : 'text-gray-500 hover:bg-gray-100'">问答</button>
     <button @click="openSettings()"
             class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
             :class="view === 'settings'
@@ -118,10 +122,10 @@
 </header>
 
 <!-- Mobile bottom nav (hidden on desktop) -->
-<nav x-show="['courses','lectures','detail','search','settings','subscriptions'].includes(view)"
+<nav x-show="['courses','lectures','detail','search','settings','subscriptions','agent'].includes(view)"
      class="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 safe-bottom z-30">
   <div class="flex justify-around py-2">
-    <button @click="_go('courses')" class="flex flex-col items-center gap-0.5 px-4 py-1"
+    <button @click="_go('courses')" class="flex flex-col items-center gap-0.5 px-2 sm:px-4 py-1"
             :class="['courses','lectures','detail'].includes(view) ? 'text-blue-600' : 'text-gray-400'">
       <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round"
@@ -129,14 +133,14 @@
       </svg>
       <span class="text-[10px]">Courses</span>
     </button>
-    <button @click="_go('search')" class="flex flex-col items-center gap-0.5 px-4 py-1"
+    <button @click="_go('search')" class="flex flex-col items-center gap-0.5 px-2 sm:px-4 py-1"
             :class="view === 'search' ? 'text-blue-600' : 'text-gray-400'">
       <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
       </svg>
       <span class="text-[10px]">Search</span>
     </button>
-    <button @click="openSubscriptions()" class="flex flex-col items-center gap-0.5 px-4 py-1"
+    <button @click="openSubscriptions()" class="flex flex-col items-center gap-0.5 px-2 sm:px-4 py-1"
             :class="view === 'subscriptions' ? 'text-blue-600' : 'text-gray-400'">
       <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round"
@@ -144,7 +148,13 @@
       </svg>
       <span class="text-[10px]">订阅</span>
     </button>
-    <button @click="openSettings()" class="flex flex-col items-center gap-0.5 px-4 py-1"
+
+    <button type="button" @click="openAgent()" class="flex flex-col items-center gap-0.5 px-2 sm:px-4 py-1"
+            :class="view === 'agent' ? 'text-blue-600' : 'text-gray-400'">
+      <span class="text-xl leading-5" aria-hidden="true">？</span>
+      <span class="text-[10px]">问答</span>
+    </button>
+    <button @click="openSettings()" class="flex flex-col items-center gap-0.5 px-2 sm:px-4 py-1"
             :class="view === 'settings' ? 'text-blue-600' : 'text-gray-400'">
       <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round"
@@ -159,7 +169,8 @@
 <!-- ╔══════════════════════════════════════╗
      ║  MAIN CONTENT AREA                   ║
      ╚══════════════════════════════════════╝ -->
-<main class="pb-20 md:pb-6">
+<main class="agent-layout pb-20 md:pb-6" :class="{ 'agent-split': agent?.dock }">
+  <div class="agent-reader" x-show="view !== 'agent'">
 
   <!-- ─── LOADING ─── -->
   <div x-show="view === 'loading'" class="flex flex-col items-center justify-center h-[60vh] gap-4">
@@ -776,6 +787,47 @@
       Save &amp; Reload
     </button>
 
+
+    <template x-if="agent">
+      <form class="agent-settings" @submit.prevent="agent.save()">
+        <h2 class="text-lg font-bold text-gray-800">课程问答</h2>
+        <p class="text-xs text-gray-500">提问与用到的课程资料会发送到所选端点。</p>
+        <label>供应商
+          <select x-model="agent.form.provider" @change="agent.selectProvider()">
+            <template x-for="provider in agent.providers" :key="provider.id">
+              <option :value="provider.id" x-text="provider.label"></option>
+            </template>
+          </select>
+        </label>
+        <label>OpenAI 兼容 API 地址
+          <input type="url" x-model="agent.form.url" placeholder="https://example.com/v1">
+        </label>
+        <label>模型 ID
+          <input type="text" x-model="agent.form.model" autocomplete="off">
+        </label>
+        <label>API key
+          <input type="password" x-model="agent.form.apiKey" autocomplete="off">
+        </label>
+        <label class="agent-remember">
+          <input type="checkbox" x-model="agent.form.rememberKey"> 在此浏览器记住 API key
+        </label>
+        <details>
+          <summary class="text-sm text-gray-600">上下文设置</summary>
+          <label>字符预算
+            <input type="number" x-model.number="agent.form.contextChars" min="16000" step="1">
+          </label>
+          <label>模型窗口（token，0 表示未指定）
+            <input type="number" x-model.number="agent.form.contextTokens" min="0" step="1">
+          </label>
+        </details>
+        <div class="agent-actions">
+          <button type="button" @click="agent.test()" :disabled="agent.testing"
+                  x-text="agent.testing ? '测试中…' : '测试连接'"></button>
+          <button type="submit" class="agent-save">保存问答设置</button>
+        </div>
+        <p x-show="agent.settingsNote" class="text-sm text-gray-600" role="status" x-text="agent.settingsNote"></p>
+      </form>
+    </template>
     <div class="mt-8 pt-6 border-t border-gray-200">
       <button @click="clearAllData()"
               class="w-full text-sm text-red-500 hover:text-red-700 py-2">
@@ -783,6 +835,92 @@
       </button>
     </div>
   </div>
+
+  </div>
+
+  <template x-if="agent">
+    <aside x-show="view === 'agent' || agent.dock" aria-label="课程问答"
+           class="agent-pane"
+           :class="{ 'agent-docked': agent.dock, 'agent-collapsed': agent.dock && agent.closed, 'agent-standalone': view === 'agent' }"
+           :style="'--agent-width:' + agent.width + 'px'">
+      <div x-show="agent.dock" class="agent-divider" role="separator" tabindex="0" aria-orientation="vertical"
+           :aria-label="agent.closed ? '拉出问答栏' : '调整问答栏宽度'"
+           @pointerdown="agent.beginResize($event)" @pointermove="agent.resize($event)"
+           @pointerup="agent.endResize($event)" @pointercancel="agent.endResize($event)"
+           @keydown.enter.prevent="agent.togglePane()" @keydown.space.prevent="agent.togglePane()"
+           @keydown.left.prevent="agent.resizeBy(32)" @keydown.right.prevent="agent.resizeBy(-32)">
+        <span x-text="agent.closed ? '‹' : '⋮'"></span>
+      </div>
+
+      <section x-show="view === 'agent' || !agent.closed" class="agent-content">
+        <header class="agent-heading">
+          <div class="min-w-0">
+            <h2 class="truncate font-semibold text-gray-900" x-text="agent.title"></h2>
+            <p x-show="agent.pageLabel" class="text-xs text-gray-500" x-text="agent.pageLabel"></p>
+          </div>
+          <div class="agent-actions">
+            <button type="button" @click="agent.historyOpen = !agent.historyOpen; agent.deletePending = false"
+                    :aria-expanded="agent.historyOpen">记录</button>
+            <button type="button" @click="agent.newChat()" :disabled="agent.running">新对话</button>
+          </div>
+        </header>
+
+        <div x-show="agent.historyOpen" class="agent-history">
+          <p x-show="!agent.conversations.length" class="text-sm text-gray-500">暂无聊天记录</p>
+          <template x-for="chat in agent.conversations" :key="chat.id">
+            <button type="button" class="agent-session" :class="{ 'agent-session-current': agent.activeId === chat.id }"
+                    :disabled="agent.running" @click="agent.openChat(chat.id)" x-text="chat.title"></button>
+          </template>
+          <div x-show="agent.messageList.length" class="agent-actions mt-2">
+            <button type="button" @click="agent.exportChat()">导出</button>
+            <button type="button" :disabled="agent.running" @click="agent.deleteChat()"
+                    class="text-red-600" x-text="agent.deletePending ? '确认删除' : '删除当前'"></button>
+          </div>
+        </div>
+
+        <div class="agent-messages" aria-live="polite"
+             x-effect="agent.messageList.length; $nextTick(() => { $el.scrollTop = $el.scrollHeight })">
+          <div x-show="!agent.messageList.length" class="agent-empty">
+            <h3 class="font-semibold text-gray-800">想了解哪门课？</h3>
+            <p class="text-sm text-gray-500" x-show="agent.configured">可以问课程重点、查找老师讲过的内容，或比较不同课次。</p>
+            <button type="button" x-show="!agent.configured" @click="openSettings()" class="text-sm text-blue-700">
+              配置问答端点
+            </button>
+          </div>
+          <template x-for="(message, index) in agent.messageList" :key="agent.activeId + ':' + index">
+            <div class="agent-message" :data-role="message.role">
+              <template x-if="message.role === 'assistant'">
+                <div class="agent-answer prose" x-html="renderMd(message.text)"
+                     x-effect="message.text; $nextTick(() => activateKaTeX($el))"></div>
+              </template>
+              <template x-if="message.role !== 'assistant'">
+                <p class="whitespace-pre-wrap" x-text="message.text"></p>
+              </template>
+            </div>
+          </template>
+          <p x-show="agent.running" class="agent-working" role="status">正在处理…</p>
+        </div>
+
+        <div class="agent-compose">
+          <div x-show="agent.notice || agent.operationError" class="agent-notice">
+            <p x-text="agent.operationError || agent.notice"></p>
+            <button type="button" x-show="agent.paused && agent.configured && !agent.running"
+                    @click="agent.send(true)" class="text-blue-700">继续检索</button>
+          </div>
+          <form class="agent-input" @submit.prevent="agent.send()">
+            <textarea x-model="agent.draft" rows="2" aria-label="输入课程问题"
+                      placeholder="输入课程问题" :disabled="!agent.configured"
+                      @keydown.ctrl.enter.prevent="agent.send()" @keydown.meta.enter.prevent="agent.send()"></textarea>
+            <button type="button" x-show="agent.running" @click="agent.stop()">停止</button>
+            <button type="submit" x-show="!agent.running" :disabled="!agent.configured || !agent.draft.trim()">发送</button>
+          </form>
+          <p class="agent-context" x-text="agent.statusLine"></p>
+        </div>
+      </section>
+    </aside>
+  </template>
+  <p x-show="view === 'agent' && !agent" class="p-6 text-sm text-gray-500" role="status"
+     x-text="agentError || '正在加载问答…'"></p>
 
 </main>
 

@@ -184,6 +184,8 @@ export async function runTurn({
     session.messages.push(appMessage("question", { text, current_page: current }));
     if (!session.visible.length) session.title = Array.from(text).slice(0, 36).join("");
     session.visible.push({ role: "user", text });
+  } else {
+    session.messages.push(appMessage("resume", "用户已选择继续检索。沿用已有证据，从尚未完成的查询继续。"));
   }
   session.run = { status: "running", dataCalls: 0, steps: 0, warned: false, lastBatch: "", reason: "", detail: "" };
   await persist();

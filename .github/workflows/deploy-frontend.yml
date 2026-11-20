@@ -3,7 +3,7 @@ name: Deploy Frontend
 on:
   push:
     branches: [main]
-    paths: ['frontend/**']
+    paths: ['frontend/**', 'agent/**', 'scripts/build_frontend.py', '.github/workflows/deploy-frontend.yml']
   workflow_dispatch:
     inputs:
       branch:
@@ -38,10 +38,13 @@ jobs:
       - name: Setup Pages
         uses: actions/configure-pages@v5
 
+      - name: Stage frontend and agent
+        run: python scripts/build_frontend.py "${{ runner.temp }}/icourse-pages"
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: ./frontend
+          path: ${{ runner.temp }}/icourse-pages
 
       - name: Deploy to GitHub Pages
         id: deployment

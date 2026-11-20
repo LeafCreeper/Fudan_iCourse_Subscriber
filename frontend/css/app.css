@@ -71,3 +71,135 @@ mark { background: #fef08a; padding: 0 2px; border-radius: 2px; }
   box-shadow: 0 4px 12px rgba(0,0,0,0.15);
   z-index: 100; transition: opacity 0.3s;
 }
+
+/* Course Q&A */
+.agent-reader { min-width: 0; }
+.agent-layout.agent-split { display: grid; grid-template-columns: minmax(0, 1fr) auto; }
+.agent-docked {
+  position: sticky;
+  top: 3.5rem;
+  align-self: start;
+  z-index: 10;
+  width: min(var(--agent-width), calc(100vw - 330px));
+  height: calc(100dvh - 3.5rem);
+  border-left: 1px solid #dbe2ea;
+}
+.agent-docked.agent-collapsed { width: 1.4rem; }
+.agent-divider {
+  position: absolute;
+  z-index: 1;
+  inset: 0 auto 0 -7px;
+  width: 15px;
+  display: grid;
+  place-items: center;
+  cursor: col-resize;
+  touch-action: none;
+  user-select: none;
+}
+.agent-divider span {
+  display: grid;
+  place-items: center;
+  width: 1.4rem;
+  height: 2.5rem;
+  border: 1px solid #dbe2ea;
+  border-radius: 6px;
+  background: #fff;
+  color: #475569;
+  font-size: 1rem;
+}
+.agent-divider:hover span, .agent-divider:focus-visible span { border-color: #2563eb; color: #1d4ed8; }
+.agent-collapsed .agent-divider { inset: 0; width: 100%; }
+.agent-standalone {
+  max-width: 58rem;
+  height: calc(100dvh - 7.25rem - env(safe-area-inset-bottom, 0px));
+  margin: 0 auto;
+}
+.agent-layout:has(.agent-standalone) { padding-bottom: 0; }
+@media (min-width: 768px) {
+  .agent-standalone { height: calc(100dvh - 3.5rem); }
+}
+.agent-content { display: flex; flex-direction: column; height: 100%; min-width: 0; background: #fff; }
+.agent-heading, .agent-compose {
+  flex: 0 0 auto;
+  padding: .8rem 1.15rem;
+  border-color: #e2e8f0;
+  border-style: solid;
+  border-width: 0;
+}
+.agent-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .6rem;
+  min-height: 3.75rem;
+  border-bottom-width: 1px;
+}
+.agent-compose { border-top-width: 1px; }
+.agent-messages { flex: 1; min-height: 0; overflow-y: auto; padding: 1rem 1.15rem; }
+.agent-messages, .agent-history { scrollbar-gutter: stable; }
+.agent-empty { margin: 1.6rem 0; display: grid; gap: .4rem; justify-items: start; }
+.agent-history { max-height: 11rem; overflow: auto; padding: .65rem 1.15rem; border-bottom: 1px solid #e2e8f0; }
+.agent-session {
+  display: block;
+  width: 100%;
+  padding: .35rem .5rem;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border-radius: 5px;
+  font-size: .875rem;
+}
+.agent-session:hover, .agent-session-current { background: #eff6ff; color: #1d4ed8; }
+.agent-message { margin-bottom: 1rem; overflow-wrap: anywhere; }
+.agent-message[data-role="user"] {
+  margin-left: auto;
+  width: fit-content;
+  max-width: 92%;
+  border-radius: .75rem .75rem .15rem .75rem;
+  background: #eff6ff;
+  padding: .5rem .7rem;
+  color: #193258;
+  font-size: .92rem;
+}
+.agent-message[data-role="progress"], .agent-working, .agent-notice { color: #526176; font-size: .8rem; }
+.agent-answer.prose { font-size: .925rem; }
+.agent-answer.prose > :first-child { margin-top: 0; }
+.agent-actions { display: flex; align-items: center; gap: .45rem; flex-shrink: 0; }
+.agent-actions button { padding: .3rem .45rem; border-radius: 5px; font-size: .8rem; }
+.agent-actions button:hover { background: #f1f5f9; }
+.agent-actions button:disabled, .agent-input button:disabled { opacity: .5; cursor: default; }
+.agent-input { display: flex; align-items: flex-end; gap: .55rem; }
+.agent-input textarea {
+  flex: 1;
+  min-width: 0;
+  max-height: 8rem;
+  resize: vertical;
+  border: 1px solid #cbd5e1;
+  border-radius: .5rem;
+  padding: .5rem .65rem;
+  font-size: .92rem;
+}
+.agent-input button, .agent-settings .agent-save {
+  border-radius: .45rem;
+  background: #2563eb;
+  color: white;
+  padding: .45rem .65rem;
+  font-size: .85rem;
+}
+.agent-settings .agent-save:hover { background: #1d4ed8; }
+.agent-context { margin-top: .4rem; color: #64748b; font: .69rem ui-monospace, monospace; overflow-wrap: anywhere; }
+.agent-notice { margin-bottom: .5rem; }
+.agent-settings { display: grid; gap: .65rem; margin-top: 2rem; padding-top: 1.5rem; border-top: 1px solid #e2e8f0; }
+.agent-settings label { display: grid; gap: .2rem; font-size: .8rem; color: #475569; }
+.agent-settings details label { margin-top: .4rem; }
+.agent-settings input:not([type="checkbox"]), .agent-settings select {
+  width: 100%;
+  border: 1px solid #cbd5e1;
+  padding: .45rem .6rem;
+  border-radius: .45rem;
+  color: #0f172a;
+  background: #fff;
+  font-size: .875rem;
+}
+.agent-settings .agent-remember { display: flex; align-items: center; gap: .4rem; }

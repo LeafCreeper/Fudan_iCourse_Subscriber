@@ -39,7 +39,10 @@ export async function requestModel(config, tools, messages, signal, maxTokens = 
     method: "POST",
     signal,
     redirect: "error",
-    headers: { Authorization: "Bearer " + config.apiKey, "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...(config.apiKey ? { Authorization: "Bearer " + config.apiKey } : {}),
+    },
     body: JSON.stringify({ model: config.model, messages, tools, tool_choice: "auto", [limitKey]: maxTokens, ...reasoning }),
   }).catch(error => {
     if (signal?.aborted) throw error;
