@@ -153,9 +153,9 @@ function _deriveState(row) {
   return "waiting";
 }
 
-function _queryAll(sql, params) {
-  if (!_db) return [];
-  const stmt = _db.prepare(sql);
+function _queryAll(sql, params, db = _db) {
+  if (!db) return [];
+  const stmt = db.prepare(sql);
   if (params) stmt.bind(params);
   const results = [];
   while (stmt.step()) results.push(stmt.getAsObject());
@@ -163,7 +163,7 @@ function _queryAll(sql, params) {
   return results;
 }
 
-function _getCourses() {
+function _getCourses(db = _db) {
   return _queryAll(`
     SELECT c.course_id AS course_id, c.title AS title, c.teacher AS teacher,
            COUNT(CASE WHEN l.summary IS NOT NULL THEN 1 END) AS summary_count,
@@ -172,8 +172,8 @@ function _getCourses() {
     FROM courses c
     LEFT JOIN lectures l ON c.course_id = l.course_id
     GROUP BY c.course_id
-    ORDER BY last_updated DESC NULLS LAST
-  `);
+    ORDER BY last_updated DESC NULLS LAST, c.course_id
+  `, [], db);
 }
 
 // Sort key parsed straight from sub_title — we deliberately do NOT trust the
@@ -200,39 +200,42 @@ function _getLectures(courseId) {
            error_stage, error_msg, summary_model, transcript
     FROM lectures WHERE course_id = ?
   `, [courseId]);
-  // Chronological ascending (earliest first); 第N-M节 breaks intra-day ties so
-  // a morning session sorts before an afternoon one. Lectures with no parseable
-  // date in their sub_title sort last (their position is genuinely unknown).
-  rows.sort(function (a, b) {
-    var ka = _lectureOrderKey(a.sub_title), kb = _lectureOrderKey(b.sub_title);
-    if (ka.dateNum === null || kb.dateNum === null) {
-      if (ka.dateNum === null && kb.dateNum === null)
-        return ka.raw < kb.raw ? -1 : (ka.raw > kb.raw ? 1 : 0);
-      return ka.dateNum === null ? 1 : -1;
-    }
-    if (ka.dateNum !== kb.dateNum) return ka.dateNum - kb.dateNum;
-    if (ka.period !== kb.period) return ka.period - kb.period;
-    return ka.raw < kb.raw ? -1 : (ka.raw > kb.raw ? 1 : 0);
-  });
-  return rows.map((r) => {
+  return _sortLectureRows(rows).map((r) => {
     r.state = _deriveState(r);
     delete r.transcript;
     return r;
   });
 }
 
-function _getLecture(subId) {
+function _sortLectureRows(rows) {
+  // Chronological ascending (earliest first); 第N-M节 breaks intra-day ties so
+  // a morning session sorts before an afternoon one. Lectures with no parseable
+  // date in their sub_title sort last (their position is genuinely unknown).
+  return rows.sort(function (a, b) {
+    var ka = _lectureOrderKey(a.sub_title), kb = _lectureOrderKey(b.sub_title);
+    if (ka.dateNum === null || kb.dateNum === null) {
+      if (ka.dateNum === null && kb.dateNum === null)
+        return _orderValues(ka.raw, kb.raw) || _orderValues(a.sub_id, b.sub_id);
+      return ka.dateNum === null ? 1 : -1;
+    }
+    if (ka.dateNum !== kb.dateNum) return ka.dateNum - kb.dateNum;
+    if (ka.period !== kb.period) return ka.period - kb.period;
+    return _orderValues(ka.raw, kb.raw) || _orderValues(a.sub_id, b.sub_id);
+  });
+}
+
+function _getLecture(subId, db = _db) {
   const rows = _queryAll(`
     SELECT l.*, c.title AS course_title, c.teacher
     FROM lectures l JOIN courses c ON l.course_id = c.course_id
     WHERE l.sub_id = ?
-  `, [subId]);
+  `, [subId], db);
   if (!rows.length) return null;
   rows[0].state = _deriveState(rows[0]);
   return rows[0];
 }
 
-function _getPptPages(subId) {
+function _getPptPages(subId, db = _db) {
   // Only return done pages with non-empty text — keeps the PPT viewer
   // free of pending placeholders and dropped pages.
   return _queryAll(`
@@ -240,8 +243,8 @@ function _getPptPages(subId) {
     FROM ppt_pages
     WHERE sub_id = ? AND ocr_status = 'done'
       AND text IS NOT NULL AND text != ''
-    ORDER BY created_sec ASC
-  `, [subId]);
+    ORDER BY created_sec ASC, page_num ASC
+  `, [subId], db);
 }
 
 function _searchSummaries(query, courseIds, page, pageSize, domains) {
@@ -448,7 +451,71 @@ function _getMeta(key) {
   return rows.length ? rows[0].value : null;
 }
 
+
+// The agent pins this reader for a turn so that a refresh can replace _db
+// without changing the data underneath an in-flight query.
+function _agentReader() {
+  const db = _db;
+  if (!db) return null;
+  let courses;
+  return {
+    courses() {
+      courses ??= _getCourses(db).map(row => ({
+        course_id: row.course_id, title: row.title || "", teacher: row.teacher || "",
+        lecture_count: row.total_count, updated_at: row.last_updated,
+      }));
+      return courses;
+    },
+    menu(courseId) {
+      const rows = _queryAll(
+        "SELECT sub_id, sub_title, substr(summary, 1, 80) AS summary, " +
+        "processed_at, error_stage, transcript != '' AS transcript " +
+        "FROM lectures WHERE course_id = ?", [courseId], db);
+      return _sortLectureRows(rows).map(row => {
+        const order = _lectureOrderKey(row.sub_title);
+        const date = order.dateNum === null ? null : String(order.dateNum);
+        return {
+          lecture_id: row.sub_id, title: row.sub_title || "",
+          date: date === null ? null : [date.slice(0, 4), date.slice(4, 6), date.slice(6)].join("-"),
+          period_start: order.period || null, state: _deriveState(row),
+          summary_excerpt: row.summary || null,
+        };
+      });
+    },
+    lecture: subId => _getLecture(subId, db),
+    ocr: subId => _getPptPages(subId, db),
+    ocrPending: subId => _queryAll(
+      "SELECT 1 FROM ppt_pages WHERE sub_id = ? AND ocr_status IN ('pending', 'processing') LIMIT 1",
+      [subId], db).length > 0,
+    candidates({ keywords, operator, modes, course_ids }) {
+      const modeRank = { summary: 0, transcript: 1, ocr: 2 };
+      const sqlCourse = course_ids ? " AND l.course_id IN (" + course_ids.map(() => "?").join(", ") + ")" : "";
+      const join = operator === "and" ? " AND " : " OR ";
+      const found = modes.flatMap(mode => {
+        const condition = mode === "ocr"
+          ? "EXISTS (SELECT 1 FROM ppt_pages p WHERE p.sub_id = l.sub_id AND p.ocr_status = 'done' AND instr(lower(p.text), ?) > 0)"
+          : "instr(lower(l." + mode + "), ?) > 0";
+        return _queryAll(
+          "SELECT l.sub_id AS lecture_id, l.sub_title AS lecture_title, " +
+          "c.title AS course_title, l.processed_at " +
+          "FROM lectures l JOIN courses c ON c.course_id = l.course_id " +
+          "WHERE (" + keywords.map(() => condition).join(join) + ")" + sqlCourse,
+          [...keywords, ...(course_ids ?? [])], db,
+        ).map(row => ({ ...row, mode, lecture_title: row.lecture_title || "", course_title: row.course_title || "" }));
+      });
+      return found.sort((a, b) =>
+        _orderValues(b.processed_at ?? "", a.processed_at ?? "") ||
+        _orderValues(a.lecture_id, b.lecture_id) || modeRank[a.mode] - modeRank[b.mode]);
+    },
+  };
+}
+
+function _orderValues(a, b) {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
 window.ICS.db = {
+  agentReader: _agentReader,
   initDB: _initFromBytes,
   initEmpty: _initEmpty,
   attachShard: _attachShard,

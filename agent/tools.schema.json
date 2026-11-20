@@ -1,0 +1,457 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "iCourse 问答 Agent 工具契约 v1",
+  "description": "根节点用于统一校验工具输入输出。供应商工具声明使用对应的 _input 定义。工具协议及跨字段规则见 qa-agent-interface.md。",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {"tool":{"const":"read_course_list"},"direction":{"const":"input"},"payload":{"$ref":"#/$defs/read_course_list_input"}},
+      "required": ["tool","direction","payload"]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {"tool":{"const":"read_course_list"},"direction":{"const":"output"},"payload":{"$ref":"#/$defs/read_course_list_output"}},
+      "required": ["tool","direction","payload"]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {"tool":{"const":"search_course"},"direction":{"const":"input"},"payload":{"$ref":"#/$defs/search_course_input"}},
+      "required": ["tool","direction","payload"]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {"tool":{"const":"search_course"},"direction":{"const":"output"},"payload":{"$ref":"#/$defs/search_course_output"}},
+      "required": ["tool","direction","payload"]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {"tool":{"const":"read_course"},"direction":{"const":"input"},"payload":{"$ref":"#/$defs/read_course_input"}},
+      "required": ["tool","direction","payload"]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {"tool":{"const":"read_course"},"direction":{"const":"output"},"payload":{"$ref":"#/$defs/read_course_output"}},
+      "required": ["tool","direction","payload"]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {"tool":{"const":"read_lecture"},"direction":{"const":"input"},"payload":{"$ref":"#/$defs/read_lecture_input"}},
+      "required": ["tool","direction","payload"]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {"tool":{"const":"read_lecture"},"direction":{"const":"output"},"payload":{"$ref":"#/$defs/read_lecture_output"}},
+      "required": ["tool","direction","payload"]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {"tool":{"const":"search_lecture"},"direction":{"const":"input"},"payload":{"$ref":"#/$defs/search_lecture_input"}},
+      "required": ["tool","direction","payload"]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {"tool":{"const":"search_lecture"},"direction":{"const":"output"},"payload":{"$ref":"#/$defs/search_lecture_output"}},
+      "required": ["tool","direction","payload"]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {"tool":{"const":"report_progress"},"direction":{"const":"input"},"payload":{"$ref":"#/$defs/report_progress_input"}},
+      "required": ["tool","direction","payload"]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {"tool":{"const":"report_progress"},"direction":{"const":"output"},"payload":{"$ref":"#/$defs/report_progress_output"}},
+      "required": ["tool","direction","payload"]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {"tool":{"const":"retain_texts"},"direction":{"const":"input"},"payload":{"$ref":"#/$defs/retain_texts_input"}},
+      "required": ["tool","direction","payload"]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {"tool":{"const":"retain_texts"},"direction":{"const":"output"},"payload":{"$ref":"#/$defs/retain_texts_output"}},
+      "required": ["tool","direction","payload"]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {"tool":{"const":"compaction"},"direction":{"const":"output"},"payload":{"$ref":"#/$defs/CompressionOutput"}},
+      "required": ["tool","direction","payload"]
+    }
+  ],
+  "$defs": {
+    "Mode": {"type":"string","enum":["summary","transcript","ocr"],"description":"课程资料类型。"},
+    "Cursor": {"type":"string","description":"由工具签发的不透明续页游标。原样传回。","minLength":1},
+    "Snapshot": {"type":"string","description":"本次查询使用的课程数据快照标识。","minLength":1},
+    "Version": {"type":"string","description":"原文版本标识。按原样传回。","minLength":1},
+    "Course": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "course_id": {"type":"string","description":"课程 ID。","minLength":1},
+        "title": {"type":"string","description":"课程标题。"},
+        "teacher": {"type":"string","description":"老师姓名。没有数据时为空字符串。"},
+        "lecture_count": {"type":"integer","description":"课次数量。","minimum":0},
+        "updated_at": {"anyOf":[{"type":"string","description":"最近更新时间。"},{"type":"null"}]}
+      },
+      "required": ["course_id","title","teacher","lecture_count","updated_at"]
+    },
+    "CoursePage": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "snapshot": {"$ref":"#/$defs/Snapshot"},
+        "items": {"type":"array","description":"本页课程。","items":{"$ref":"#/$defs/Course"},"minItems":0,"maxItems":100},
+        "total": {"type":"integer","description":"课程总数。","minimum":0},
+        "page": {"type":"integer","description":"本页页码。","minimum":0},
+        "page_max": {"type":"integer","description":"实际页大小。","minimum":1,"maximum":100},
+        "next_page": {"anyOf":[{"type":"integer","description":"下一页页码。","minimum":0},{"type":"null"}]}
+      },
+      "required": ["snapshot","items","total","page","page_max","next_page"]
+    },
+    "LectureMenuItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "lecture_id": {"type":"string","description":"课次 ID。","minLength":1},
+        "title": {"type":"string","description":"课次标题。"},
+        "date": {"anyOf":[{"type":"string","description":"按课次排序规则识别的日期，格式 YYYY-MM-DD。","pattern":"^[0-9]{4}-[0-9]{2}-[0-9]{2}$"},{"type":"null"}]},
+        "period_start": {"anyOf":[{"type":"integer","description":"首个节次。","minimum":1},{"type":"null"}]},
+        "state": {"type":"string","enum":["novideo","failed","ready","skipped","processing","waiting"],"description":"现有前端共享的课次状态。"},
+        "summary_excerpt": {"anyOf":[{"type":"string","description":"摘要前 80 字符。没有摘要时为 null。","maxLength":80},{"type":"null"}]}
+      },
+      "required": ["lecture_id","title","date","period_start","state","summary_excerpt"]
+    },
+    "Source": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "course_id": {"type":"string","description":"课程 ID。","minLength":1},
+        "lecture_id": {"type":"string","description":"课次 ID。","minLength":1},
+        "mode": {"$ref":"#/$defs/Mode"},
+        "source_version": {"$ref":"#/$defs/Version"}
+      },
+      "required": ["course_id","lecture_id","mode","source_version"]
+    },
+    "OcrPage": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {"page_num":{"type":"integer","description":"数据库原始 PPT 页码。","minimum":0},"created_sec":{"type":"integer","description":"该页的时间位置，单位为秒。","minimum":0}},
+      "required": ["page_num","created_sec"]
+    },
+    "OcrSpan": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {"page":{"$ref":"#/$defs/OcrPage"},"start":{"type":"integer","description":"该 PPT 页正文在 OCR 原文中的起点。","minimum":0},"end":{"type":"integer","description":"该 PPT 页正文在 OCR 原文中的终点。","minimum":0}},
+      "required": ["page","start","end"]
+    },
+    "LectureItem": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "status": {"const":"text"},
+            "source": {"$ref":"#/$defs/Source"},
+            "text_id": {"type":"string","description":"可在压缩时选择的原文块 ID。","minLength":1},
+            "text": {"type":"string","description":"原文。","minLength":1,"maxLength":20000},
+            "start": {"type":"integer","description":"本段起点。","minimum":0},
+            "end": {"type":"integer","description":"本段终点。","minimum":0},
+            "total_chars": {"type":"integer","description":"完整原文的字符数。","minimum":0},
+            "next_offset": {"anyOf":[{"type":"integer","description":"未读部分的起点。","minimum":0},{"type":"null"}]},
+            "next_cursor": {"anyOf":[{"$ref":"#/$defs/Cursor"},{"type":"null"}]},
+            "ocr_pages": {"type":"array","description":"与本段相交的 OCR 页。其他资料类型返回空列表。","items":{"$ref":"#/$defs/OcrSpan"}}
+          },
+          "required": ["status","source","text_id","text","start","end","total_chars","next_offset","next_cursor","ocr_pages"],
+          "allOf": [{"if":{"properties":{"next_cursor":{"type":"null"}}},"then":{"properties":{"next_offset":{"type":"null"}}},"else":{"properties":{"next_offset":{"type":"integer"}}}}]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "status": {"const":"missing"},
+            "lecture_id": {"type":"string","description":"请求的课次 ID。","minLength":1},
+            "mode": {"$ref":"#/$defs/Mode"},
+            "reason": {"type":"string","enum":["LECTURE_NOT_FOUND","TEXT_MISSING","TEXT_PENDING"],"description":"本项无法返回正文的原因。"}
+          },
+          "required": ["status","lecture_id","mode","reason"]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "status": {"const":"deferred"},
+            "source": {"$ref":"#/$defs/Source"},
+            "next_offset": {"type":"integer","description":"尚未返回的起点。","minimum":0},
+            "next_cursor": {"$ref":"#/$defs/Cursor"},
+            "reason": {"const":"CONTEXT_BUDGET"}
+          },
+          "required": ["status","source","next_offset","next_cursor","reason"]
+        }
+      ]
+    },
+    "KeywordCount": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {"keyword":{"type":"string","description":"本次查询中的关键词。","minLength":1},"count":{"type":"integer","description":"该关键词在整份资料中的命中数。","minimum":0}},
+      "required": ["keyword","count"]
+    },
+    "Hit": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "keyword": {"type":"string","description":"命中的关键词。","minLength":1},
+        "match_start": {"type":"integer","description":"命中起点。","minimum":0},
+        "match_end": {"type":"integer","description":"命中终点。","minimum":0},
+        "snippet": {"type":"string","description":"原文片段，命中前后各最多 30 字符。","minLength":1},
+        "snippet_start": {"type":"integer","description":"片段在原文中的起点。","minimum":0},
+        "snippet_end": {"type":"integer","description":"片段在原文中的终点。","minimum":0},
+        "ocr_page": {"anyOf":[{"$ref":"#/$defs/OcrPage"},{"type":"null"}]}
+      },
+      "required": ["keyword","match_start","match_end","snippet","snippet_start","snippet_end","ocr_page"]
+    },
+    "SearchGroup": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "source": {"$ref":"#/$defs/Source"},
+        "course_title": {"type":"string","description":"课程标题。"},
+        "lecture_title": {"type":"string","description":"课次标题。"},
+        "hit_count": {"type":"integer","description":"该资料的全部命中数。","minimum":1,"maximum":2147483647},
+        "keyword_counts": {"type":"array","description":"每个查询词的命中数。","items":{"$ref":"#/$defs/KeywordCount"},"minItems":1,"maxItems":8},
+        "hits": {"type":"array","description":"本页命中片段。","items":{"$ref":"#/$defs/Hit"},"minItems":1,"maxItems":5},
+        "next_hit_cursor": {"anyOf":[{"$ref":"#/$defs/Cursor"},{"type":"null"}]}
+      },
+      "required": ["source","course_title","lecture_title","hit_count","keyword_counts","hits","next_hit_cursor"]
+    },
+    "Error": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "ok": {"const":false},
+        "error": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "type": "string",
+              "enum": ["UNKNOWN_TOOL","INVALID_ARGUMENT","NOT_FOUND","INVALID_CURSOR","STALE_CURSOR","SOURCE_CHANGED","DATA_UNAVAILABLE","BATCH_LIMIT","BUDGET_PAUSED","RESULT_TOO_LARGE","NO_PROGRESS","CANCELLED","INTERNAL_ERROR"],
+              "description": "机器可读的错误代码。"
+            },
+            "message": {"type":"string","description":"一句话解释问题和可行的下一步。","minLength":1},
+            "recovery": {"type":"string","enum":["fix_arguments","restart","retry","resume"],"description":"允许的恢复方式。"}
+          },
+          "required": ["code","message","recovery"],
+          "allOf": [
+            {"if":{"properties":{"code":{"enum":["UNKNOWN_TOOL","INVALID_ARGUMENT","NOT_FOUND","RESULT_TOO_LARGE"]}}},"then":{"properties":{"recovery":{"const":"fix_arguments"}}}},
+            {"if":{"properties":{"code":{"enum":["INVALID_CURSOR","STALE_CURSOR","SOURCE_CHANGED"]}}},"then":{"properties":{"recovery":{"const":"restart"}}}},
+            {"if":{"properties":{"code":{"enum":["DATA_UNAVAILABLE","BATCH_LIMIT","INTERNAL_ERROR"]}}},"then":{"properties":{"recovery":{"const":"retry"}}}},
+            {"if":{"properties":{"code":{"enum":["BUDGET_PAUSED","NO_PROGRESS","CANCELLED"]}}},"then":{"properties":{"recovery":{"const":"resume"}}}}
+          ]
+        }
+      },
+      "required": ["ok","error"]
+    },
+    "CompressionOutput": {"type":"string","minLength":1,"maxLength":12000,"pattern":"\\S","description":"压缩阶段正常结束时的摘要纯文本。次要但有用的信息和来源定位写入正文。原文选择由可选的 retain_texts 调用单独记录。"},
+    "read_course_list_input": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "page": {"anyOf":[{"type":"integer","description":"从 0 开始的页码。首页可传 null。续页传上次返回的 next_page。","minimum":0},{"type":"null"}]},
+        "page_max": {"anyOf":[{"type":"integer","description":"每页 1 到 100 门课程。null 使用 30。续页保持首次调用的页大小。","minimum":1,"maximum":100},{"type":"null"}]}
+      },
+      "required": ["page","page_max"],
+      "description": "浏览当前快照中全部可读课程，按最近更新时间倒序。返回课程基本信息、总数和 next_page。按课名或老师找课时用 search_course。"
+    },
+    "read_course_list_output": {"oneOf":[{"type":"object","additionalProperties":false,"properties":{"ok":{"const":true},"data":{"$ref":"#/$defs/CoursePage"}},"required":["ok","data"]},{"$ref":"#/$defs/Error"}]},
+    "search_course_input": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "query": {"type":"string","minLength":1,"maxLength":120,"pattern":"\\S","description":"课名或老师姓名中的一个字面词或短语。去掉首尾空白后须非空，翻页时保持查询词。"},
+        "page": {"anyOf":[{"type":"integer","description":"从 0 开始的页码。首页可传 null。续页传上次返回的 next_page。","minimum":0},{"type":"null"}]},
+        "page_max": {"anyOf":[{"type":"integer","description":"每页 1 到 100 门课程。null 使用 30。续页保持首次调用的页大小。","minimum":1,"maximum":100},{"type":"null"}]}
+      },
+      "required": ["query","page","page_max"],
+      "description": "按课名或老师姓名的字面片段查找课程。返回匹配课程的 ID、基本信息、匹配总数及 next_page。已知课程 ID 且需要查看课次菜单时用 read_course。"
+    },
+    "search_course_output": {"oneOf":[{"type":"object","additionalProperties":false,"properties":{"ok":{"const":true},"data":{"$ref":"#/$defs/CoursePage"}},"required":["ok","data"]},{"$ref":"#/$defs/Error"}]},
+    "read_course_input": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {"course_id":{"type":"string","description":"课程 ID。首页与续页均传同一个值。","minLength":1},"cursor":{"anyOf":[{"$ref":"#/$defs/Cursor"},{"type":"null"}],"description":"首页传 null。翻页时传上次返回的 next_cursor，course_id 保持不变。"}},
+      "required": ["course_id","cursor"],
+      "description": "读取指定课程的基本信息和按时间升序排列的课次，返回课次 ID、摘要节选与 next_cursor。适合已知课程 ID、尚未确定课次的情况。"
+    },
+    "read_course_output": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "ok": {"const":true},
+            "data": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "snapshot": {"$ref":"#/$defs/Snapshot"},
+                "course": {"$ref":"#/$defs/Course"},
+                "items": {"type":"array","description":"本页课次，最早的课次在前。","items":{"$ref":"#/$defs/LectureMenuItem"},"minItems":0,"maxItems":100},
+                "total": {"type":"integer","description":"课程课次总数。","minimum":0},
+                "next_cursor": {"anyOf":[{"$ref":"#/$defs/Cursor"},{"type":"null"}]}
+              },
+              "required": ["snapshot","course","items","total","next_cursor"]
+            }
+          },
+          "required": ["ok","data"]
+        },
+        {"$ref":"#/$defs/Error"}
+      ]
+    },
+    "read_lecture_input": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "lecture_ids": {"anyOf":[{"type":"array","description":"首次最多四个不同课次。使用 cursor 时传 null。","items":{"type":"string","description":"课次 ID。","minLength":1},"minItems":1,"maxItems":4,"uniqueItems":true},{"type":"null"}]},
+        "mode": {"anyOf":[{"$ref":"#/$defs/Mode"},{"type":"null"}],"description":"首次为 null 时使用 summary。续页传 null。"},
+        "offset": {"anyOf":[{"type":"integer","description":"首次调用可对单课次指定字符偏移。null 从 0 开始。续页传 null。","minimum":0},{"type":"null"}]},
+        "source_version": {"anyOf":[{"$ref":"#/$defs/Version"},{"type":"null"}],"description":"单课次读取时可传定位来源的版本。无版本要求或续页时传 null。"},
+        "cursor": {"anyOf":[{"$ref":"#/$defs/Cursor"},{"type":"null"}],"description":"初次读取传 null。续读时传该份原文的 next_cursor，其余字段都传 null。"}
+      },
+      "required": ["lecture_ids","mode","offset","source_version","cursor"],
+      "description": "读取一个或多个已知课次的原文，返回来源、位置、文本与每份原文的 next_cursor。概览读 summary，课堂原话读 transcript，幻灯片内容读 ocr。搜索命中可用其来源版本和片段起点定位。",
+      "allOf": [
+        {
+          "if": {"properties":{"cursor":{"type":"null"}}},
+          "then": {"properties":{"lecture_ids":{"type":"array"}}},
+          "else": {"properties":{"lecture_ids":{"type":"null"},"mode":{"type":"null"},"offset":{"type":"null"},"source_version":{"type":"null"}}}
+        },
+        {"if":{"anyOf":[{"properties":{"offset":{"type":"integer"}}},{"properties":{"source_version":{"type":"string"}}}]},"then":{"properties":{"lecture_ids":{"type":"array","maxItems":1}}}}
+      ]
+    },
+    "read_lecture_output": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "ok": {"const":true},
+            "data": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {"snapshot":{"$ref":"#/$defs/Snapshot"},"items":{"type":"array","description":"按输入顺序返回。游标续页只返回一个目标。","items":{"$ref":"#/$defs/LectureItem"},"minItems":1,"maxItems":4}},
+              "required": ["snapshot","items"]
+            }
+          },
+          "required": ["ok","data"]
+        },
+        {"$ref":"#/$defs/Error"}
+      ]
+    },
+    "search_lecture_input": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "keywords": {"type":"array","description":"1 到 8 个去除首尾空白后非空且互异的关键词。","items":{"type":"string","description":"字面关键词或短语。","minLength":1,"maxLength":120},"minItems":1,"maxItems":8,"uniqueItems":true},
+        "operator": {"type":"string","enum":["and","or"],"description":"and 要求所有词出现在同一课次和同一资料类型中。or 匹配任一词。"},
+        "modes": {"type":"array","description":"非空、无重复的搜索类型列表。","items":{"$ref":"#/$defs/Mode"},"minItems":1,"maxItems":3,"uniqueItems":true},
+        "scope": {"type":"string","enum":["all","courses"],"description":"all 指全部可读课程。courses 只搜 course_ids 所列课程。"},
+        "course_ids": {
+          "anyOf": [{"type":"array","description":"scope=courses 时必填，非空且无重复。scope=all 时传 null。","items":{"type":"string","description":"课程 ID。","minLength":1},"minItems":1,"maxItems":100,"uniqueItems":true},{"type":"null"}]
+        },
+        "cursor": {"anyOf":[{"$ref":"#/$defs/Cursor"},{"type":"null"}],"description":"首页传 null。按需要传上次返回的 next_cursor 或 next_hit_cursor，其他查询参数保持一致。"}
+      },
+      "required": ["keywords","operator","modes","scope","course_ids","cursor"],
+      "description": "在指定课程范围和资料类型中按字面关键词查找，返回课次及资料类型、命中次数、片段和位置。顶层 next_cursor 翻命中组，组内 next_hit_cursor 翻该组的命中片段。需要原话或更多上下文时用 read_lecture。",
+      "allOf": [{"if":{"properties":{"scope":{"const":"courses"}}},"then":{"properties":{"course_ids":{"type":"array"}}},"else":{"properties":{"course_ids":{"type":"null"}}}}]
+    },
+    "search_lecture_output": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "ok": {"const":true},
+            "data": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {"const":"groups"},
+                    "snapshot": {"$ref":"#/$defs/Snapshot"},
+                    "items": {"type":"array","description":"按稳定顺序返回命中组。","items":{"$ref":"#/$defs/SearchGroup"},"minItems":0,"maxItems":10},
+                    "next_cursor": {"anyOf":[{"$ref":"#/$defs/Cursor"},{"type":"null"}]}
+                  },
+                  "required": ["kind","snapshot","items","next_cursor"]
+                },
+                {"type":"object","additionalProperties":false,"properties":{"kind":{"const":"hits"},"snapshot":{"$ref":"#/$defs/Snapshot"},"item":{"$ref":"#/$defs/SearchGroup"}},"required":["kind","snapshot","item"]}
+              ]
+            }
+          },
+          "required": ["ok","data"]
+        },
+        {"$ref":"#/$defs/Error"}
+      ]
+    },
+    "report_progress_input": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {"text":{"type":"string","description":"告诉用户目前正在查什么。使用一行纯文本。","minLength":1,"maxLength":160,"pattern":"^[^\\r\\n\\u0085\\u2028\\u2029]+$"}},
+      "required": ["text"],
+      "description": "向用户显示一句当前检索进度。可在较长检索中使用，每批最多一次，须先于同批的数据工具，并且至少有一个同批数据调用。它不计入四个数据调用。"
+    },
+    "report_progress_output": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {"ok":{"const":true},"data":{"type":"object","additionalProperties":false,"properties":{"shown":{"const":true}},"required":["shown"]}},
+          "required": ["ok","data"]
+        },
+        {"$ref":"#/$defs/Error"}
+      ]
+    },
+    "retain_texts_input": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {"ids":{"type":"array","description":"最多四个互异的 ID，可传空列表。","items":{"type":"string","description":"本次压缩输入中实际出现的原文块 ID。","minLength":1},"minItems":0,"maxItems":4,"uniqueItems":true}},
+      "required": ["ids"],
+      "description": "只在应用发出压缩指令后可用。从当前上下文已经出现的原文块中选择最多四条，并返回确认的 kept_ids。至多成功选一次，可以跳过。"
+    },
+    "retain_texts_output": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "ok": {"const":true},
+            "data": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {"kept_ids":{"type":"array","description":"按选择顺序返回。","items":{"type":"string","description":"已选中的原文块 ID。","minLength":1},"minItems":0,"maxItems":4}},
+              "required": ["kept_ids"]
+            }
+          },
+          "required": ["ok","data"]
+        },
+        {"$ref":"#/$defs/Error"}
+      ]
+    }
+  }
+}
