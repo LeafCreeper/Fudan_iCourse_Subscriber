@@ -2,10 +2,14 @@ import { questionPrompt, compressionPrompt } from "./prompts.js";
 
 export const appMessage = (kind, data) => ({ role: "user", content: JSON.stringify({ kind, data }) });
 export const makeInput = messages => [{ role: "system", content: questionPrompt }, ...messages];
-export const compressionInput = messages => [...messages, appMessage("compression_instruction", compressionPrompt)];
+export function compressionInput(messages, blocks) {
+  const candidates = Array.from(blocks.values(), block =>
+    [block.text_id, block.source.lecture_id, block.source.mode, block.start, block.end]);
+  return [...messages, appMessage("compression_instruction", { instructions: compressionPrompt, candidates })];
+}
 export const newSession = () => ({
   id: crypto.randomUUID(), title: "新对话", updatedAt: Date.now(),
-  visible: [], messages: [], seenPages: {}, cursors: {}, nextTextId: 0, compacted: 0, run: null,
+  visible: [], messages: [], seenPages: {}, cursors: {}, nextTextId: 0, compacted: 0, compressions: [], run: null,
 });
 
 export function inputSize(messages, tools) {
@@ -118,29 +122,16 @@ export function textBlocks(messages) {
   return items;
 }
 
-export function compactedMessages(messages, summary, texts, tools, config) {
-  const kept = [];
-  const recent = new Set(messages.filter(message => message.role === "assistant" &&
-    !message.tool_calls && message.content).slice(-4));
+export function compactedMessages(messages, summary, texts) {
+  const kept = [appMessage("compacted_context", { summary, texts })];
   for (const message of messages) {
     if (message.role === "user") {
       if (["question", "prior_tool_calls"].includes(JSON.parse(message.content).kind)) kept.push(message);
     } else if (message.tool_calls) {
       kept.push(appMessage("prior_tool_calls", message.tool_calls));
-    } else if (recent.has(message)) {
-      kept.push({ role: "assistant", content: message.content });
     }
   }
-  const checkpoint = appMessage("compacted_context", { summary, texts });
-  let next = [checkpoint, ...kept];
-  let clipped = false;
-  while (next.length > 1 && usageRatio(inputSize(next, tools), config) >= 0.95) {
-    // Drop older records in batches while preserving the latest end of the chat.
-    kept.splice(0, Math.max(1, Math.floor(kept.length / 5)));
-    next = [checkpoint, ...kept];
-    clipped = true;
-  }
-  return { messages: next, clipped };
+  return kept;
 }
 
 function shortCount(value) {

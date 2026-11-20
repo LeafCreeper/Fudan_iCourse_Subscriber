@@ -414,7 +414,7 @@
     "retain_texts_input": {
       "type": "object",
       "additionalProperties": false,
-      "properties": {"ids":{"type":"array","description":"最多四个互异的 ID，可传空列表。","items":{"type":"string","description":"本次压缩输入中实际出现的原文块 ID。","minLength":1},"minItems":0,"maxItems":4,"uniqueItems":true}},
+      "properties": {"ids":{"type":"array","description":"从候选列表选择一到四个不同的短 ID，如 t12 和 t34。","items":{"type":"string","description":"candidates 每项第一个值。","minLength":1},"minItems":1,"maxItems":4,"uniqueItems":true}},
       "required": ["ids"],
       "description": "只在应用发出压缩指令后可用。从当前上下文已经出现的原文块中选择最多四条，并返回确认的 kept_ids。至多成功选一次，可以跳过。"
     },

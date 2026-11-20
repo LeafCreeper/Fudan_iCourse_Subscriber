@@ -62,7 +62,9 @@ export async function runTurn({
 
   async function compact() {
     const blocks = textBlocks(session.messages);
-    const input = compressionInput(session.messages);
+    const input = compressionInput(session.messages, blocks);
+    const debug = { after_message: session.visible.length, candidate_count: blocks.size, calls: [], kept_ids: null };
+    session.compressions.push(debug);
     let kept = null;
     for (let step = 0; step < 4; step++) {
       if (signal.aborted) return false;
@@ -83,6 +85,7 @@ export async function runTurn({
               kept = parsed.data.ids;
               value = verifiedResult(spec, "retain_texts", ok({ kept_ids: kept }));
             }
+            debug.calls.push({ arguments: call.function.arguments, result: value });
           }
           input.push(batchResult(call, value));
         }
@@ -90,11 +93,11 @@ export async function runTurn({
       }
       if (finish !== "stop" || !validateDefinition(spec, "CompressionOutput", message.content)) return false;
       const texts = (kept ?? []).map(id => blocks.get(id));
-      const next = compactedMessages(session.messages, message.content.trim(), texts, tools, config);
-      if (ratio(next.messages) >= 0.98) return false;
-      session.messages = next.messages;
+      const next = compactedMessages(session.messages, message.content.trim(), texts);
+      if (ratio(next) >= 1) return false;
+      session.messages = next;
       session.compacted++;
-      if (next.clipped) appendNote(session, "已开启新的上下文段。较早的完整消息仍可在本地聊天记录中查看。");
+      debug.kept_ids = kept ?? [];
       await persist();
       return true;
     }

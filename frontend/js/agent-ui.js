@@ -215,7 +215,7 @@ export async function makeAgentUI(app) {
     },
 
     exportChat() {
-      const data = { title: active.title, messages: active.visible };
+      const data = { title: active.title, messages: active.visible, compressions: active.compressions };
       const download = document.createElement("a");
       const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
       download.href = url;
