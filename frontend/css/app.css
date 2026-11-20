@@ -177,8 +177,10 @@ mark { background: #fef08a; padding: 0 2px; border-radius: 2px; }
 .agent-input textarea {
   flex: 1;
   min-width: 0;
+  box-sizing: border-box;
   max-height: 8rem;
-  resize: vertical;
+  overflow-y: auto;
+  resize: none;
   border: 1px solid #cbd5e1;
   border-radius: .5rem;
   padding: .5rem .65rem;

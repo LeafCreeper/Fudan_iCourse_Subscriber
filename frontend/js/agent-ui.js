@@ -229,6 +229,12 @@ export async function makeAgentUI(app) {
       return "Listing courses" + (args.page ? " · page " + (args.page + 1) : "");
     },
 
+    fitInput(input) {
+      input.style.height = "auto";
+      const border = input.offsetHeight - input.clientHeight;
+      input.style.height = (input.scrollHeight + border) + "px";
+    },
+
     enter(event) {
       if (event.shiftKey || event.isComposing || event.keyCode === 229) return;
       event.preventDefault();

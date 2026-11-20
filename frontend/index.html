@@ -936,6 +936,8 @@
           <form class="agent-input" @submit.prevent="agent.send()">
             <textarea x-model="agent.draft" rows="2" aria-label="输入课程问题"
                       placeholder="输入课程问题" :disabled="!agent.configured"
+                      x-effect="agent.draft; agent.width; agent.closed; agent.desktop; view; $nextTick(() => agent.fitInput($el))"
+                      @resize.window="agent.fitInput($el)"
                       @keydown.enter="agent.enter($event)"></textarea>
             <button type="button" x-show="agent.running" @click="agent.stop()">停止</button>
             <button type="submit" x-show="!agent.running" :disabled="!agent.configured || !agent.draft.trim()">发送</button>
