@@ -60,21 +60,41 @@ function _renderMarkdown(mdText, parser = marked) {
   return DOMPurify.sanitize(restored);
 }
 
-function _renderAnswer(text, findSource) {
-  if (!text) return "";
-  const citations = new Map();
+const _citationSyntax = {
+  name: "lectureCitation",
+  level: "inline",
+  start(src) { return src.indexOf("[[cite:"); },
+  tokenizer(src) {
+    const match = /^\[\[cite:([^\s[\]]+?):(summary|transcript|ocr)\]\]/.exec(src);
+    if (match) return { type: "lectureCitation", raw: match[0], id: match[1], mode: match[2] };
+  },
+};
+
+let _citationReader;
+
+function _citationNumber(numbers, key) {
+  if (!numbers.has(key)) numbers.set(key, numbers.size + 1);
+  return numbers.get(key);
+}
+
+function _indexCitations(text, numbers) {
+  if (!text.includes("[[cite:")) return;
+  _citationReader ??= new marked.Marked({ extensions: [_citationSyntax] });
+  _citationReader.walkTokens(_citationReader.lexer(_stashFormulas(text).text), token => {
+    if (token.type === _citationSyntax.name) _citationNumber(numbers, JSON.stringify([token.id, token.mode]));
+  });
+}
+
+function _renderAnswer(text, findSource, numbers) {
+  if (!text.includes("[[cite:")) return _renderMarkdown(text);
+  const visibleNumbers = new Map(numbers);
+  const rendered = new Map();
   const parser = new marked.Marked({ extensions: [{
-    name: "lectureCitation",
-    level: "inline",
-    start(src) { return src.indexOf("[[cite:"); },
-    tokenizer(src) {
-      const match = /^\[\[cite:([^\s[\]]+?):(summary|transcript|ocr)\]\]/.exec(src);
-      if (match) return { type: "lectureCitation", raw: match[0], id: match[1], mode: match[2] };
-    },
+    ..._citationSyntax,
     renderer({ id, mode }) {
       const key = JSON.stringify([id, mode]);
-      if (citations.has(key)) return citations.get(key);
-      const number = citations.size + 1;
+      if (rendered.has(key)) return rendered.get(key);
+      const number = _citationNumber(visibleNumbers, key);
       const source = findSource(id);
       const mark = document.createElement(source ? "button" : "span");
       mark.className = "agent-citation";
@@ -89,7 +109,7 @@ function _renderAnswer(text, findSource) {
         mark.title = "本地资料中找不到该课次";
       }
       const html = mark.outerHTML;
-      citations.set(key, html);
+      rendered.set(key, html);
       return html;
     },
   }] });
@@ -131,6 +151,7 @@ function _plainSnippet(mdText, maxLen) {
 window.ICS.render = {
   renderMarkdown: _renderMarkdown,
   renderAnswer: _renderAnswer,
+  indexCitations: _indexCitations,
   activateKaTeX: _activateKaTeX,
   plainSnippet: _plainSnippet,
 };

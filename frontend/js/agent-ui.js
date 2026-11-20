@@ -21,6 +21,8 @@ export async function makeAgentUI(app) {
   const pane = JSON.parse(localStorage.getItem(paneKey) ?? '{"width":400,"closed":false}');
   const config = loadConfig(defaultConfig);
   let active = records.get(sessions.active) ?? saved.sort((a, b) => b.updatedAt - a.updatedAt)[0] ?? newSession();
+  const citationNumbers = new Map();
+  let citationIndex = 0;
   let controller;
   let lastPage;
   let drag;
@@ -38,6 +40,8 @@ export async function makeAgentUI(app) {
       record.run.detail = "上次检索中断，可以继续。";
     }
     active = record;
+    citationNumbers.clear();
+    citationIndex = 0;
     sessions.active = active.id;
   }
 
@@ -108,6 +112,10 @@ export async function makeAgentUI(app) {
     },
 
     sync() {
+      for (const entry of active.visible.slice(citationIndex)) {
+        if (entry.role === "assistant") window.ICS.render.indexCitations(entry.text, citationNumbers);
+      }
+      citationIndex = active.visible.length;
       this.messageList = active.visible.slice();
       this.lastQuestion = active.visible.findLastIndex(item => item.role === "user");
       this.conversations = [...records.values()].sort((a, b) => b.updatedAt - a.updatedAt)
@@ -231,7 +239,8 @@ export async function makeAgentUI(app) {
     },
 
     renderAnswer(text) {
-      return window.ICS.render.renderAnswer(text, window.ICS.db.lectureSource);
+      const findSource = app.view === "loading" ? () => undefined : window.ICS.db.lectureSource;
+      return window.ICS.render.renderAnswer(text, findSource, citationNumbers);
     },
 
     openCitation(event) {
