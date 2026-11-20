@@ -7,9 +7,7 @@ import {
 } from "./context.js";
 
 const batchLimit = () => failure("BATCH_LIMIT", "本批工具已达到上限，请在下一批调用。", "retry");
-const oversized = () => failure("RESULT_TOO_LARGE", "返回内容超出剩余空间，请缩小返回范围。", "fix_arguments");
 const unknown = () => failure("UNKNOWN_TOOL", "当前阶段不允许执行这个工具。", "fix_arguments");
-const paused = () => failure("BUDGET_PAUSED", "检索已暂停，等用户选择继续。", "resume");
 const canceled = () => failure("CANCELLED", "用户停止了检索。", "resume");
 const batchResult = (call, value) => ({ role: "tool", tool_call_id: call.id, content: JSON.stringify(value) });
 export const dataTools = ["read_course_list", "search_course", "read_course", "read_lecture", "search_lecture"];
@@ -42,7 +40,8 @@ export async function runTurn({
   const memo = new Map();
   const measure = messages => inputSize(messages, tools);
   const ratio = messages => usageRatio(measure(messages), config);
-  const room = messages => contextRoom(measure(messages), config);
+  // Leave one share for tool metadata and the next model request.
+  const textRoom = (count = 1) => Math.max(0, Math.floor(contextRoom(measure(session.messages), config) / (count + 1)));
   const callModel = async (messages, streamText) => {
     const reply = await transport(config, tools, makeInput(messages), signal, outputTokens, streamText);
     const usage = reply.usage;
@@ -107,8 +106,6 @@ export async function runTurn({
   async function processBatch(message, run) {
     const entries = message.tool_calls.map((call, index) => ({ call, name: call.function.name, index }));
     let dataSlots = 0;
-    let remaining = 40 - run.dataCalls;
-    let limitReached = false;
     const pending = new Map();
     let progressSeen = false;
     for (const entry of entries) {
@@ -133,19 +130,12 @@ export async function runTurn({
       if (memo.has(entry.key)) {
         entry.result = memo.get(entry.key);
       } else if (!pending.has(entry.key)) {
-        if (remaining === 0) {
-          entry.result = paused();
-          limitReached = true;
-        } else {
-          remaining--;
-          pending.set(entry.key, entry);
-        }
+        pending.set(entry.key, entry);
       }
     }
 
     const progress = entries.find(entry => entry.name === "report_progress" && entry.args);
-    const roomPerTool = Math.max(0, Math.floor((room([...session.messages, message]) - 1800) /
-      (2 * Math.max(1, entries.length))));
+    const roomPerTool = textRoom(pending.size);
     if (pending.size && !signal.aborted) {
       const line = progress?.args.text ?? message.content?.trim();
       if (line) appendNote(session, line);
@@ -153,35 +143,27 @@ export async function runTurn({
       appendCalls(session, pending);
       await notify();
     } else if (progress) {
-      progress.result = signal.aborted ? canceled() : limitReached ? paused() :
-        invalid("进度消息需要至少一个会执行的同批数据调用。");
+      progress.result = signal.aborted ? canceled() : invalid("进度消息需要至少一个会执行的同批数据调用。");
     }
-    const handles = new Map([...pending].map(([key, entry]) => [key, (async () => {
-      if (signal.aborted) return canceled();
-      const result = verifiedResult(spec, entry.name, await courseTools.run(entry.name, entry.args, roomPerTool));
-      if (JSON.stringify(result).length > Math.max(600, roomPerTool * 2)) return oversized();
-      if (result.ok) {
-        memo.set(key, result);
-        run.dataCalls++;
-      }
-      return result;
-    })()]));
-    const resolved = await Promise.all(entries.map(async entry => {
-      const value = entry.result ?? await handles.get(entry.key);
+    const results = new Map();
+    for (const [key, entry] of pending) {
+      const value = signal.aborted ? canceled() :
+        verifiedResult(spec, entry.name, courseTools.run(entry.name, entry.args, roomPerTool));
+      results.set(key, value);
+      if (value.ok) memo.set(key, value);
+    }
+    const resolved = entries.map(entry => {
+      const value = entry.result ?? results.get(entry.key);
       if (value.ok) rememberResult(session, dataset, entry.name, value, entry.args);
       return { value, entry };
-    }));
+    });
     session.messages.push(message, ...resolved.map(({ entry, value }) => batchResult(entry.call, value)));
     const key = JSON.stringify(resolved.filter(({ entry }) => entry.name !== "report_progress")
       .map(({ entry, value }) => [entry.key ?? entry.name, value.ok ? "ok" : value.error.code]));
     const stalled = pending.size === 0 || resolved.every(x => !x.value.ok || x.entry.name === "report_progress");
     const repeated = stalled && key === run.lastBatch;
     run.lastBatch = stalled ? key : "";
-    if (run.dataCalls >= 12 && !run.warned) {
-      run.warned = true;
-      session.messages.push(appMessage("tool_budget", "已执行至少 12 次数据调用。请判断还有哪些证据会改变答案。"));
-    }
-    return { limitReached, repeated };
+    return repeated;
   }
 
   function stop(reason, detail) {
@@ -191,15 +173,14 @@ export async function runTurn({
   }
 
   if (text) {
-    const pageRoom = Math.max(0, Math.min(20000, Math.floor((room(session.messages) - 8000) / 2)));
-    const current = appendPage(session, dataset, page, reader, courseTools, pageRoom);
+    const current = appendPage(session, dataset, page, reader, courseTools, textRoom());
     session.messages.push(appMessage("question", { text, current_page: current }));
     if (!session.visible.length) session.title = Array.from(text).slice(0, 36).join("");
     session.visible.push({ role: "user", text });
   } else {
     session.messages.push(appMessage("resume", "用户已选择继续检索。沿用已有证据，从尚未完成的查询继续。"));
   }
-  session.run = { status: "running", dataCalls: 0, steps: 0, warned: false, lastBatch: "", reason: "", detail: "" };
+  session.run = { status: "running", steps: 0, lastBatch: "", reason: "", detail: "" };
   await persist();
 
   let triedOverflow = false;
@@ -221,12 +202,11 @@ export async function runTurn({
       const run = session.run;
       const size = measure(session.messages);
       const pressure = usageRatio(size, config);
-      const grew = size.chars - lastCompactionSize >= Math.min(20000, config.contextChars * 0.08);
-      if (pressure >= 0.98 || (pressure >= 0.8 && (lastCompactionSize === 0 || grew))) {
+      if (pressure >= 0.8 && size.chars > lastCompactionSize) {
         const compressed = await compact();
         lastCompactionSize = measure(session.messages).chars;
         if (signal.aborted) break;
-        if (!compressed && ratio(session.messages) >= 0.98) {
+        if (!compressed && pressure >= 1) {
           stop("context", "上下文空间不足。可调大设置里的上下文预算，或开启新对话。");
           break;
         }
@@ -245,9 +225,8 @@ export async function runTurn({
       }
       if (message.tool_calls?.length) {
         onText("");
-        const result = await processBatch(message, run);
-        if (result.limitReached) stop("budget", "本段检索调用已用完，可以继续检索。");
-        else if (result.repeated) stop("no_progress", "模型重复调用且没有取得新资料，已暂停检索。");
+        const repeated = await processBatch(message, run);
+        if (repeated) stop("no_progress", "模型重复调用且没有取得新资料，已暂停检索。");
         await persist();
         if (session.run.status !== "running") break;
         continue;
