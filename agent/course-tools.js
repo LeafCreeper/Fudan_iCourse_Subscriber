@@ -26,27 +26,32 @@ function toOcr(pages) {
   });
 }
 
-// Search each physical OCR page on its own. A group's keywords may match on
-// different pages, but a single match and its snippet never cross a page.
-function searchText(segments, keywords) {
+function countMatches(text, term, onMatch) {
+  let count = 0;
+  for (let from = 0; ; ) {
+    const match = text.indexOf(term, from);
+    if (match < 0) return count;
+    onMatch?.(match);
+    count++;
+    from = match + 1;
+  }
+}
+
+// A single OCR match never crosses a page.
+function searchText(segments, keywords, terms) {
   const counts = keywords.map(keyword => ({ keyword, count: 0 }));
   const hits = [];
-  const terms = keywords.map(asciiLower);
   for (const { chars, start, page } of segments) {
     const folded = asciiLower(chars.join(""));
     const offsets = [0];
     for (const char of chars) offsets.push(offsets.at(-1) + char.length);
     const index = new Map(offsets.map((offset, char) => [offset, char]));
     terms.forEach((term, word) => {
-      for (let from = 0; ; ) {
-        const match = folded.indexOf(term, from);
-        if (match < 0) break;
-        from = match + 1;
+      counts[word].count += countMatches(folded, term, match => {
         const left = index.get(match);
         const right = index.get(match + term.length);
-        counts[word].count++;
         hits.push({ left, right, start, chars, page, word });
-      }
+      });
     });
   }
   hits.sort((a, b) => a.start + a.left - b.start - b.left || a.word - b.word);
@@ -173,7 +178,8 @@ export function createCourseTools(reader, snapshot, cursors, nextTextId) {
   function searchLecture(args) {
     const { cursor = null, modes, scope, course_ids = null } = args;
     const keywords = args.keywords.map(word => word.trim());
-    if (keywords.some(word => !word) || !unique(keywords.map(asciiLower))) return invalid("keywords 必须非空且互异。");
+    const terms = keywords.map(asciiLower);
+    if (keywords.some(word => !word) || !unique(terms)) return invalid("keywords 必须非空且互异。");
     const key = JSON.stringify([keywords, modes, scope, course_ids]);
     const position = cursor === null ? ok({ kind: "groups", index: 0 }) : take(cursor, "search_lecture", key);
     if (!position.ok) return position;
@@ -181,13 +187,26 @@ export function createCourseTools(reader, snapshot, cursors, nextTextId) {
       const ids = new Set(reader.courses().map(course => course.course_id));
       if (course_ids.some(id => !ids.has(id))) return missing("搜索范围含未知课程 ID。");
     }
+    if (!queryCache.has(key)) {
+      const ranked = reader.candidates({ keywords: terms, modes, course_ids }).map(row => {
+        const { lecture_id: id, mode } = row;
+        const pages = mode === "ocr" ? reader.ocr(id).map(page => page.text) : [reader.lecture(id)[mode]];
+        const counts = terms.map(() => 0);
+        for (const page of pages) {
+          const folded = asciiLower(page);
+          terms.forEach((term, index) => { counts[index] += countMatches(folded, term); });
+        }
+        return { row, matched: counts.filter(Boolean).length, total: counts.reduce((sum, count) => sum + count, 0) };
+      });
+      ranked.sort((a, b) => b.matched - a.matched || b.total - a.total);
+      queryCache.set(key, ranked.map(entry => entry.row));
+    }
     const { kind, index } = position.data;
-    if (!queryCache.has(key)) queryCache.set(key, reader.candidates({ keywords: keywords.map(asciiLower), modes, course_ids }));
     const candidates = queryCache.get(key);
     const makeGroup = (row, from) => {
       const { lecture_id: id, mode } = row;
       const { source, segments } = getSource(id, mode);
-      const { counts, hits } = searchText(segments, keywords);
+      const { counts, hits } = searchText(segments, keywords, terms);
       const next = from + 5;
       const matches = hits.slice(from, next).map(hit => {
         const { start, ...match } = snippet(hit, keywords);

@@ -388,7 +388,7 @@
                   "additionalProperties": false,
                   "properties": {
                     "kind": {"const":"groups"},
-                    "items": {"type":"array","description":"按稳定顺序返回命中组。","items":{"$ref":"#/$defs/SearchGroup"},"minItems":0,"maxItems":10},
+                    "items": {"type":"array","description":"先按命中的不同关键词数量降序，再按总命中次数降序。","items":{"$ref":"#/$defs/SearchGroup"},"minItems":0,"maxItems":10},
                     "next_cursor": {"anyOf":[{"$ref":"#/$defs/Cursor"},{"type":"null"}]}
                   },
                   "required": ["kind","items","next_cursor"]
