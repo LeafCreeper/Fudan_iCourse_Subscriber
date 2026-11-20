@@ -4,6 +4,8 @@ const textPage = 20000;
 const missing = message => failure("NOT_FOUND", message, "fix_arguments");
 const oversized = () => failure("RESULT_TOO_LARGE", "本轮留给原文的空间不足。请拆分读取。", "fix_arguments");
 const unique = values => new Set(values).size === values.length;
+export const readPageKey = ({ source, start }) =>
+  JSON.stringify([source.course_id, source.lecture_id, source.mode, start]);
 
 function pageOf(items, page, size) {
   const start = page * size;
@@ -124,7 +126,7 @@ export function createCourseTools(reader, snapshot, cursors, nextTextId) {
       next_cursor: end < rows.length ? issue("read_course", course_id, end) : null });
   }
 
-  function readLecture(args, room) {
+  function readLecture(args, room, sentPages) {
     const { lecture_ids, mode, cursor } = args;
     const continuation = cursor === null ? null : take(cursor, "read_lecture");
     if (continuation && !continuation.ok) return continuation;
@@ -132,7 +134,7 @@ export function createCourseTools(reader, snapshot, cursors, nextTextId) {
       id, mode: mode ?? "summary", start: 0,
     }));
     const items = [];
-    let returnedText = false;
+    let returnedPage = false;
     for (const { id, mode, start } of targets) {
       const result = getSource(id, mode);
       if (result.reason) {
@@ -141,19 +143,29 @@ export function createCourseTools(reader, snapshot, cursors, nextTextId) {
       }
       const { chars, source, segments } = result;
       const next = position => issue("read_lecture", "", { id, mode, start: position });
+      const key = readPageKey({ source, start });
+      const original = sentPages?.get(key);
+      if (original && chars.slice(start, original.end).join("") === original.text) {
+        items.push({ status: "already_read", text_id: original.text_id,
+          next_cursor: original.end < chars.length ? next(original.end) : null });
+        returnedPage = true;
+        continue;
+      }
       if (room <= 0) {
         items.push({ status: "deferred", source, next_cursor: next(start), reason: "CONTEXT_BUDGET" });
         continue;
       }
       const end = Math.min(start + textPage, start + room, chars.length);
-      items.push({ status: "text", source, text_id: nextTextId(), text: chars.slice(start, end).join(""),
+      const block = { status: "text", source, text_id: nextTextId(), text: chars.slice(start, end).join(""),
         start, end, total_chars: chars.length, next_cursor: end < chars.length ? next(end) : null,
         ocr_pages: mode === "ocr" ? segments.filter(span => span.start < end && span.end > start)
-          .map(({ page, start, end }) => ({ page, start, end })) : [] });
+          .map(({ page, start, end }) => ({ page, start, end })) : [] };
+      items.push(block);
+      sentPages?.set(key, block);
       room -= end - start;
-      returnedText = true;
+      returnedPage = true;
     }
-    return returnedText || items.every(item => item.status === "missing") ? ok({ items }) : oversized();
+    return returnedPage || items.every(item => item.status === "missing") ? ok({ items }) : oversized();
   }
 
   function searchLecture(args) {
@@ -212,9 +224,9 @@ export function createCourseTools(reader, snapshot, cursors, nextTextId) {
       }
       return JSON.stringify([name, normalized]);
     },
-    run(name, args, room = textPage * 4) {
+    run(name, args, room = textPage * 4, sentPages) {
       if (!reader) return failure("DATA_UNAVAILABLE", "课程资料尚未载入。", "retry");
-      return actions[name](args, room);
+      return actions[name](args, room, sentPages);
     },
   };
 }

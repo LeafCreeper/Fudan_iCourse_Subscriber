@@ -1,5 +1,5 @@
 import { failure, invalid, modelTools, ok, parseCall, validateDefinition } from "./contract.js";
-import { createCourseTools } from "./course-tools.js";
+import { createCourseTools, readPageKey } from "./course-tools.js";
 import { ModelRequestError, requestModel } from "./model.js";
 import {
   appMessage, appendPage, compactedMessages, compressionInput, contextRoom,
@@ -28,6 +28,11 @@ function verifiedResult(spec, name, result) {
     throw new Error("Agent tool result does not match its contract: " + name);
   }
   return result;
+}
+
+function referenceReadPages(result) {
+  return ok({ items: result.data.items.map(block => block.status === "text" ?
+    { status: "already_read", text_id: block.text_id, next_cursor: block.next_cursor } : block) });
 }
 
 export async function runTurn({
@@ -95,6 +100,7 @@ export async function runTurn({
       const next = compactedMessages(session.messages, message.content.trim(), texts);
       if (ratio(next) >= 1) return false;
       session.messages = next;
+      sentPages = new Map(texts.map(block => [readPageKey(block), block]));
       session.compacted++;
       debug.kept_ids = kept ?? [];
       await persist();
@@ -103,7 +109,7 @@ export async function runTurn({
     return false;
   }
 
-  async function processBatch(message, run) {
+  async function processBatch(message) {
     const entries = message.tool_calls.map((call, index) => ({ call, name: call.function.name, index }));
     let dataSlots = 0;
     const pending = new Map();
@@ -148,21 +154,24 @@ export async function runTurn({
     const results = new Map();
     for (const [key, entry] of pending) {
       const value = signal.aborted ? canceled() :
-        verifiedResult(spec, entry.name, courseTools.run(entry.name, entry.args, roomPerTool));
+        verifiedResult(spec, entry.name, courseTools.run(entry.name, entry.args, roomPerTool, sentPages));
       results.set(key, value);
-      if (value.ok) memo.set(key, value);
+      if (value.ok && entry.name !== "read_lecture") memo.set(key, value);
     }
     const resolved = entries.map(entry => {
       const value = entry.result ?? results.get(entry.key);
       if (value.ok) rememberResult(session, dataset, entry.name, value, entry.args);
-      return { value, entry };
+      const duplicate = value.ok && entry.name === "read_lecture" && pending.get(entry.key) !== entry;
+      return { entry, value: duplicate ? referenceReadPages(value) : value };
     });
     session.messages.push(message, ...resolved.map(({ entry, value }) => batchResult(entry.call, value)));
-    const key = JSON.stringify(resolved.filter(({ entry }) => entry.name !== "report_progress")
-      .map(({ entry, value }) => [entry.key ?? entry.name, value.ok ? "ok" : value.error.code]));
-    const stalled = pending.size === 0 || resolved.every(x => !x.value.ok || x.entry.name === "report_progress");
-    const repeated = stalled && key === run.lastBatch;
-    run.lastBatch = stalled ? key : "";
+    const stalled = pending.size === 0 || resolved.every(({ entry, value }) => !value.ok ||
+      entry.name === "report_progress" ||
+      (entry.name === "read_lecture" && value.data.items.every(block => block.status === "already_read")));
+    const key = stalled ? JSON.stringify(entries.filter(entry => entry.name !== "report_progress")
+      .map(entry => entry.key ?? entry.name)) : "";
+    const repeated = stalled && key === lastStalledBatch;
+    lastStalledBatch = key;
     return repeated;
   }
 
@@ -180,7 +189,9 @@ export async function runTurn({
   } else {
     session.messages.push(appMessage("resume", "用户已选择继续检索。沿用已有证据，从尚未完成的查询继续。"));
   }
-  session.run = { status: "running", steps: 0, lastBatch: "", reason: "", detail: "" };
+  let sentPages = new Map(Array.from(textBlocks(session.messages).values(), block => [readPageKey(block), block]));
+  let lastStalledBatch = "";
+  session.run = { status: "running", steps: 0, reason: "", detail: "" };
   await persist();
 
   let compactionFailed = false;
@@ -230,7 +241,7 @@ export async function runTurn({
       }
       if (message.tool_calls?.length) {
         onText("");
-        const repeated = await processBatch(message, run);
+        const repeated = await processBatch(message);
         if (repeated) stop("no_progress", "模型重复调用且没有取得新资料，已暂停检索。");
         await persist();
         if (session.run.status !== "running") break;
