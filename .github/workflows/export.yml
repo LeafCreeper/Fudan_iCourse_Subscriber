@@ -145,3 +145,10 @@ jobs:
           else
             python scripts/export_course.py --course-id "$EXPORT_COURSE_ID" $EXPORT_FLAG
           fi
+
+  request-cleanup:
+    needs: export
+    if: ${{ always() }}
+    permissions:
+      actions: write
+    uses: ./.github/workflows/request-cleanup.yml

@@ -49,3 +49,10 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
+  request-cleanup:
+    needs: deploy
+    if: ${{ always() }}
+    permissions:
+      actions: write
+    uses: ./.github/workflows/request-cleanup.yml

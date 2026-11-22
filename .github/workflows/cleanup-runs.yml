@@ -1,15 +1,12 @@
 name: Clean Up Action History
 
 on:
-  workflow_run:
-    workflows:
-      - iCourse Check
-      - Single Run
-      - Export Course Summaries
-      - Delete Course Data
-      - Deploy Frontend
-    types: [completed]
   workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: Run ID supplied by the calling workflow
+        type: string
+        required: false
 
 permissions:
   actions: write
@@ -20,7 +17,7 @@ concurrency:
 
 jobs:
   cleanup:
-    if: ${{ vars.AUTO_DELETE_ACTION_RUNS == 'clean_all' || vars.AUTO_DELETE_ACTION_RUNS == 'clean_but_last_3_days' || (vars.AUTO_DELETE_ACTION_RUNS == 'clean_this' && github.event_name == 'workflow_run') }}
+    if: ${{ vars.AUTO_DELETE_ACTION_RUNS == 'clean_all' || vars.AUTO_DELETE_ACTION_RUNS == 'clean_but_last_3_days' || (vars.AUTO_DELETE_ACTION_RUNS == 'clean_this' && inputs.source_run_id != '') }}
     runs-on: ubuntu-latest
     steps:
       - name: Delete workflow runs
@@ -28,10 +25,29 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           CLEANUP_MODE: ${{ vars.AUTO_DELETE_ACTION_RUNS }}
-          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
         run: |
+          case "$CLEANUP_MODE" in
+            clean_this|clean_all|clean_but_last_3_days) ;;
+            *) exit 0 ;;
+          esac
+
+          if [ -n "$SOURCE_RUN_ID" ]; then
+            [[ "$SOURCE_RUN_ID" =~ ^[0-9]+$ ]]
+            run_api="repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID"
+            for attempt in {1..60}; do
+              status=$(gh api "$run_api" --jq '.status')
+              [ "$status" = completed ] && break
+              sleep 5
+            done
+            if [ "$status" != completed ]; then
+              echo "::error::Source workflow did not finish within five minutes."
+              exit 1
+            fi
+          fi
+
           if [ "$CLEANUP_MODE" = clean_this ]; then
-            gh api --method DELETE "repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_RUN_ID}"
+            gh api --method DELETE "$run_api"
             exit 0
           fi
 

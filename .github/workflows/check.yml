@@ -253,3 +253,10 @@ jobs:
           git commit -q -m "chore: update encrypted database (sharded v2)"
           git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
           git push --force origin data
+
+  request-cleanup:
+    needs: check
+    if: ${{ always() }}
+    permissions:
+      actions: write
+    uses: ./.github/workflows/request-cleanup.yml

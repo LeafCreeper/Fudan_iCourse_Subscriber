@@ -125,3 +125,10 @@ jobs:
           git commit -q -m "chore: delete ${{ inputs.sub_ids != '' && 'lecture(s)' || 'course(s)' }} ${{ inputs.sub_ids || inputs.course_ids }}"
           git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
           git push --force origin data
+
+  request-cleanup:
+    needs: delete
+    if: ${{ always() }}
+    permissions:
+      actions: write
+    uses: ./.github/workflows/request-cleanup.yml

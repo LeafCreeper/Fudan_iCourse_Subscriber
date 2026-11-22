@@ -1,0 +1,24 @@
+name: Request Action History Cleanup
+
+on:
+  workflow_call:
+
+jobs:
+  dispatch:
+    if: ${{ contains(fromJSON('["clean_this", "clean_all", "clean_but_last_3_days"]'), vars.AUTO_DELETE_ACTION_RUNS) }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Request cleanup
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          CLEANUP_MODE: ${{ vars.AUTO_DELETE_ACTION_RUNS }}
+        run: |
+          case "$CLEANUP_MODE" in
+            clean_this|clean_all|clean_but_last_3_days)
+              gh workflow run cleanup-runs.yml --repo "$GITHUB_REPOSITORY" \
+                --ref "$DEFAULT_BRANCH" -f source_run_id="$GITHUB_RUN_ID"
+              ;;
+          esac
